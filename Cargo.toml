@@ -103,6 +103,8 @@ nix = { version = "0.31", features = [
   "hostname",
   "process",
   "signal",
+  "socket",
+  "uio",
 ] }
 
 # CLI
