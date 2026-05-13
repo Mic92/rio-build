@@ -201,19 +201,20 @@ flowchart TB
 <div class="diagram"><pre class="mermaid">
 flowchart TB
   IN(["NAR stream in"]) --> AUTH["🔑 verify token · claim placeholder · buffer + SHA-256 check\n32 GiB in-flight cap → gRPC backpressure"]
-  AUTH --> SZ{"NAR &lt; 256 KiB ?"}
+  AUTH --> SZ{"NAR ≥ 256 KiB ?"}
 
-  SZ ==>|"yes · most .drv files"| INL["inline blob → PG bytea\nno S3 · no chunking"]
-  SZ ==>|"no"| CDC["FastCDC\n16–256 KiB · 64 KiB avg"]
+  SZ ==>|"yes · chunked"| CDC["FastCDC\n16–256 KiB · 64 KiB avg"]
   CDC --> HASH["BLAKE3 per chunk"]
   HASH --> WAL["PG txn: manifest\n+ refcount UPSERT"]
   WAL --> NEW{"refcount\n== 1 ?"}
   NEW -->|"new"| S3P["S3 PUT ×8 parallel\nchunks/{aa}/{blake3}"]
   NEW -->|"exists · dedup"| SKIP(["skip upload"])
-
-  INL ==> DONE
   S3P --> DONE["PG: flip manifest → 'complete'\nnarinfo · references · content index"]
   SKIP --> DONE
+
+  SZ ==>|"no · inline\nmost .drv files"| INL["inline blob → PG bytea\nno S3 · no chunking"]
+  INL ==> DONE
+
   DONE ==> OUT(["✓ stored"])
 
   style IN fill:#16243a,stroke:#6ea8fe,stroke-width:2px
