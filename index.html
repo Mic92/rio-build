@@ -96,6 +96,31 @@ sequenceDiagram
   GW-->>C: NAR stream
 </pre></div>
 
+<h2>Who moves bytes where</h2>
+<div class="diagram"><pre class="mermaid">
+flowchart LR
+  C["nix client"]
+  GW["gateway\n(proxy only — no chunking)"]
+  ST["rio-store\nchunk · hash · reassemble"]
+  B["builder"]
+  S3[("S3")]
+
+  C ==>|"① upload sources"| GW
+  GW ==>|"①"| ST
+  ST ==>|"② inputs (FUSE lazy)"| B
+  B ==>|"③ outputs (direct)"| ST
+  ST ==>|"④ results"| GW
+  GW ==>|"④"| C
+  ST <==> S3
+
+  style ST stroke:#f0883e,stroke-width:3px
+  linkStyle 0,1 stroke:#6ea8fe,stroke-width:2px
+  linkStyle 2,3 stroke:#56d364,stroke-width:2px
+  linkStyle 4,5 stroke:#d2a8ff,stroke-width:2px
+  linkStyle 6 stroke:#8b94a7
+</pre></div>
+<p class="legend">rio-store is in the path of every byte and owns all CPU-heavy work (chunk, hash, reassemble). Gateway is a thin proxy on the two client-facing legs only — builder↔store I/O never touches it. ssh-ng has no payload compression; only ssh transport-level zlib.</p>
+
 <h2>Scheduler — one global DAG, many builds</h2>
 <p class="legend">Two clients submit overlapping builds. Scheduler merges them into one graph, dedupes by store path, builds shared nodes once, and notifies every interested build on completion.</p>
 <div class="diagram"><pre class="mermaid">
@@ -134,31 +159,6 @@ flowchart TB
   <li><b>Ready queue</b> = nodes with all deps done, ordered by critical-path length &times; duration estimate.</li>
   <li><b>Failures</b>: retry with backoff; after N distinct builders fail &rarr; <em>poisoned</em>, dependents fail fast.</li>
 </ul>
-
-<h2>Who moves bytes where</h2>
-<div class="diagram"><pre class="mermaid">
-flowchart LR
-  C["nix client"]
-  GW["gateway\n(proxy only — no chunking)"]
-  ST["rio-store\nchunk · hash · reassemble"]
-  B["builder"]
-  S3[("S3")]
-
-  C ==>|"① upload sources"| GW
-  GW ==>|"①"| ST
-  ST ==>|"② inputs (FUSE lazy)"| B
-  B ==>|"③ outputs (direct)"| ST
-  ST ==>|"④ results"| GW
-  GW ==>|"④"| C
-  ST <==> S3
-
-  style ST stroke:#f0883e,stroke-width:3px
-  linkStyle 0,1 stroke:#6ea8fe,stroke-width:2px
-  linkStyle 2,3 stroke:#56d364,stroke-width:2px
-  linkStyle 4,5 stroke:#d2a8ff,stroke-width:2px
-  linkStyle 6 stroke:#8b94a7
-</pre></div>
-<p class="legend">rio-store is in the path of every byte and owns all CPU-heavy work (chunk, hash, reassemble). Gateway is a thin proxy on the two client-facing legs only — builder↔store I/O never touches it. ssh-ng has no payload compression; only ssh transport-level zlib.</p>
 
 <h2>Storage</h2>
 <div class="diagram"><pre class="mermaid">
