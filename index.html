@@ -7,18 +7,19 @@
 <style>
   :root { --bg:#0f1117; --panel:#161a23; --border:#2a3142; --text:#d6dbe5; --muted:#8b94a7; --accent:#6ea8fe; }
   * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.55 ui-sans-serif,system-ui,"Segoe UI",sans-serif; }
-  main { max-width:1080px; margin:0 auto; padding:2rem 1.4rem 4rem; }
-  h1 { font-size:1.8rem; margin:0 0 .2rem; }
-  h1 + p { color:var(--muted); margin:0 0 1.6rem; }
-  h2 { font-size:1.1rem; color:var(--accent); border-bottom:1px solid var(--border); padding-bottom:.3rem; margin:2.2rem 0 .7rem; }
+  body { margin:0; background:var(--bg); color:var(--text); font:16px/1.6 ui-sans-serif,system-ui,"Segoe UI",sans-serif; }
+  main { max-width:1180px; margin:0 auto; padding:2rem 1.4rem 4rem; }
+  h1 { font-size:2.1rem; margin:0 0 .25rem; letter-spacing:-.01em; }
+  h1 + p { color:var(--muted); margin:0 0 1.8rem; font-size:1.05rem; }
+  h2 { font-size:1.35rem; color:var(--accent); border-bottom:1px solid var(--border); padding-bottom:.35rem; margin:2.8rem 0 .8rem; }
   .diagram { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:1rem; margin:.6rem 0 1.2rem; overflow-x:auto; }
   .diagram .mermaid { display:flex; justify-content:center; }
-  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:.7rem; margin:.6rem 0 1rem; }
-  .card { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:.7rem .85rem; }
-  .card b { display:block; margin-bottom:.2rem; }
-  .card p { margin:0; color:var(--muted); font-size:.87rem; }
-  .legend { display:flex; flex-wrap:wrap; gap:.3rem 1.3rem; font-size:.83rem; color:var(--muted); margin:0 0 .4rem; }
+  .cards { display:grid; grid-template-columns:repeat(4,1fr); gap:.7rem; margin:.6rem 0 1rem; }
+  @media (max-width:860px){ .cards{grid-template-columns:repeat(2,1fr);} }
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:.75rem .9rem; }
+  .card b { display:block; margin-bottom:.25rem; font-size:1.02rem; }
+  .card p { margin:0; color:var(--muted); font-size:.9rem; }
+  .legend { display:flex; flex-wrap:wrap; gap:.3rem 1.3rem; font-size:.92rem; color:var(--muted); margin:.1rem 0 .5rem; }
   .legend span::before { content:"— "; font-weight:bold; }
   .l-ssh::before { color:#f0883e; } .l-grpc::before { color:#6ea8fe; }
   .l-sql::before { color:#56d364; } .l-s3::before { color:#d2a8ff; }
@@ -46,29 +47,37 @@
 <h2>Topology</h2>
 <div class="legend"><span class="l-ssh">ssh-ng</span><span class="l-grpc">gRPC</span><span class="l-sql">SQL</span><span class="l-s3">S3</span></div>
 <div class="diagram"><pre class="mermaid">
-flowchart LR
+flowchart TB
   C["nix client"]
-  GW["rio-gateway\n(N replicas)"]
-  S["rio-scheduler\n(leader)"]
-  ST["rio-store"]
+  GW["rio-gateway\nN replicas · stateless"]
+  subgraph svc [" "]
+    direction LR
+    S["rio-scheduler\nleader-elected"]
+    ST["rio-store"]
+  end
   B["rio-builder ×N\nFUSE + SSD cache"]
-  PG[("PostgreSQL")]
-  S3[("S3")]
+  subgraph back [" "]
+    direction LR
+    PG[("PostgreSQL")]
+    S3[("S3")]
+  end
 
   C ==>|ssh-ng| GW
   GW -->|SubmitBuild| S
   GW -->|PutPath / GetPath| ST
-  S <-->|BuildExecution stream| B
-  B -->|GetPath / PutPath| ST
   S -->|cache check| ST
+  S <-->|BuildExecution\nstream| B
+  B -->|GetPath / PutPath| ST
   S --- PG
   ST --- PG
   ST --- S3
 
-  linkStyle 0 stroke:#f0883e,stroke-width:2px
-  linkStyle 1,2,3,4,5 stroke:#6ea8fe
-  linkStyle 6,7 stroke:#56d364
-  linkStyle 8 stroke:#d2a8ff
+  style svc fill:none,stroke:none
+  style back fill:none,stroke:none
+  linkStyle 0 stroke:#f0883e,stroke-width:3px
+  linkStyle 1,2,3,4,5 stroke:#6ea8fe,stroke-width:2px
+  linkStyle 6,7 stroke:#56d364,stroke-width:2px
+  linkStyle 8 stroke:#d2a8ff,stroke-width:2px
 </pre></div>
 
 <h2>One build, end to end</h2>
@@ -100,42 +109,39 @@ sequenceDiagram
 <div class="diagram"><pre class="mermaid">
 flowchart LR
   C["nix client"]
-  GW["gateway\n(proxy only — no chunking)"]
-  ST["rio-store\nchunk · hash · reassemble"]
+  GW["gateway\nthin proxy — no chunking"]
+  ST["rio-store\nchunk · hash · reassemble\nall CPU-heavy work here"]
   B["builder"]
-  S3[("S3")]
 
-  C ==>|"① upload sources"| GW
-  GW ==>|"①"| ST
-  ST ==>|"② inputs (FUSE lazy)"| B
-  B ==>|"③ outputs (direct)"| ST
-  ST ==>|"④ results"| GW
-  GW ==>|"④"| C
-  ST <==> S3
+  C ==>|"① upload sources"| GW ==>|"①"| ST
+  ST -.->|"② inputs · FUSE lazy"| B
+  B ==>|"③ outputs · direct"| ST
+  ST -.->|"④ results"| GW -.->|"④"| C
 
-  style ST stroke:#f0883e,stroke-width:3px
-  linkStyle 0,1 stroke:#6ea8fe,stroke-width:2px
-  linkStyle 2,3 stroke:#56d364,stroke-width:2px
-  linkStyle 4,5 stroke:#d2a8ff,stroke-width:2px
-  linkStyle 6 stroke:#8b94a7
+  style ST stroke:#f0883e,stroke-width:3px,fill:#231a14
+  linkStyle 0,1 stroke:#6ea8fe,stroke-width:2.5px
+  linkStyle 2,3 stroke:#56d364,stroke-width:2.5px
+  linkStyle 4,5 stroke:#d2a8ff,stroke-width:2.5px
 </pre></div>
-<p class="legend">rio-store is in the path of every byte and owns all CPU-heavy work (chunk, hash, reassemble). Gateway is a thin proxy on the two client-facing legs only — builder↔store I/O never touches it. ssh-ng has no payload compression; only ssh transport-level zlib.</p>
+<p class="legend">Every byte routes through rio-store, which owns all CPU-heavy work. Gateway is a thin proxy on the two client-facing legs only — builder↔store I/O never touches it. ssh-ng has no payload compression; only ssh transport-level zlib.</p>
 
 <h2>Scheduler — one global DAG, many builds</h2>
 <p class="legend">Two clients submit overlapping builds. Scheduler merges them into one graph, dedupes by store path, builds shared nodes once, and notifies every interested build on completion.</p>
 <div class="diagram"><pre class="mermaid">
 flowchart TB
-  subgraph in1 ["build A &nbsp;(tenant&nbsp;1)"]
-    direction TB
-    a1["firefox"] --> a2["nss"] --> a3["glibc"]
-  end
-  subgraph in2 ["build B &nbsp;(tenant&nbsp;2)"]
-    direction TB
-    b1["vim"] --> b2["ncurses"] --> b3["glibc"]
+  subgraph row1 [" "]
+    direction LR
+    subgraph in1 ["build A &nbsp;(tenant&nbsp;1)"]
+      direction TB
+      a1["firefox"] --> a2["nss"] --> a3["glibc"]
+    end
+    subgraph in2 ["build B &nbsp;(tenant&nbsp;2)"]
+      direction TB
+      b1["vim"] --> b2["ncurses"] --> b3["glibc"]
+    end
   end
 
-  in1 ==> M(["merge + dedup"])
-  in2 ==> M
+  row1 ==> M(["merge + dedup\nby store path"])
 
   subgraph dag ["global DAG  ·  one node per derivation"]
     direction TB
@@ -146,11 +152,12 @@ flowchart TB
   end
   M ==> dag
 
-  g3 -.->|cache hit / substitute?| ST[("rio-store")]
-  dag ==>|"ready &amp; not cached\n→ critical-path priority queue"| W["builders"]
+  dag ==>|"ready + not cached\n→ critical-path priority"| W["builders"]
+  dag -.->|"cache hit /\nsubstitutable?"| ST[("rio-store")]
 
-  style g3 stroke:#f0883e,stroke-width:3px
-  style M fill:#1d2330,stroke:#6ea8fe
+  style row1 fill:none,stroke:none
+  style g3 stroke:#f0883e,stroke-width:3px,fill:#231a14
+  style M fill:#16243a,stroke:#6ea8fe,stroke-width:2px
 </pre></div>
 
 <h2>Storage</h2>
@@ -177,7 +184,9 @@ flowchart LR
   mermaid.initialize({ startOnLoad:true, theme:"dark", themeVariables:{
     background:"#161a23", primaryColor:"#1d2330", primaryBorderColor:"#3a4257",
     primaryTextColor:"#d6dbe5", lineColor:"#5a6378", fontFamily:"ui-sans-serif,system-ui,sans-serif"
-  }, flowchart:{curve:"basis"}, sequence:{actorMargin:36,messageFontSize:13} });
+  }, flowchart:{curve:"basis",nodeSpacing:55,rankSpacing:55,padding:14},
+     sequence:{actorMargin:48,messageFontSize:14,actorFontSize:15,noteFontSize:13},
+     fontSize:15 });
 </script>
 </body>
 </html>
