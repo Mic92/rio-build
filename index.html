@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rio-build — System Overview</title>
+<style>
+  :root { --bg:#0f1117; --panel:#161a23; --border:#2a3142; --text:#d6dbe5; --muted:#8b94a7; --accent:#6ea8fe; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.55 ui-sans-serif,system-ui,"Segoe UI",sans-serif; }
+  main { max-width:1080px; margin:0 auto; padding:2rem 1.4rem 4rem; }
+  h1 { font-size:1.8rem; margin:0 0 .2rem; }
+  h1 + p { color:var(--muted); margin:0 0 1.6rem; }
+  h2 { font-size:1.1rem; color:var(--accent); border-bottom:1px solid var(--border); padding-bottom:.3rem; margin:2.2rem 0 .7rem; }
+  .diagram { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:1rem; margin:.6rem 0 1.2rem; overflow-x:auto; }
+  .diagram .mermaid { display:flex; justify-content:center; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:.7rem; margin:.6rem 0 1rem; }
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:.7rem .85rem; }
+  .card b { display:block; margin-bottom:.2rem; }
+  .card p { margin:0; color:var(--muted); font-size:.87rem; }
+  .legend { display:flex; flex-wrap:wrap; gap:.3rem 1.3rem; font-size:.83rem; color:var(--muted); margin:0 0 .4rem; }
+  .legend span::before { content:"— "; font-weight:bold; }
+  .l-ssh::before { color:#f0883e; } .l-grpc::before { color:#6ea8fe; }
+  .l-sql::before { color:#56d364; } .l-s3::before { color:#d2a8ff; }
+  code { background:#1d2230; padding:.1em .35em; border-radius:4px; font-size:.88em; }
+  footer { color:var(--muted); font-size:.83rem; margin-top:3rem; border-top:1px solid var(--border); padding-top:.8rem; }
+  @media print { body { background:#fff; color:#000; } .diagram,.card { background:#fff; border-color:#ccc; } }
+</style>
+</head>
+<body>
+<main>
+
+<h1>rio-build</h1>
+<p>Distributed Nix build farm. Clients speak the standard Nix worker protocol over SSH; everything behind the gateway is gRPC.</p>
+
+<div class="cards">
+  <div class="card"><b>nix client</b><p>Unmodified Nix. <code>--store ssh-ng://rio</code> or remote-builder hook.</p></div>
+  <div class="card"><b>rio-gateway</b><p>SSH server. Translates worker-protocol opcodes → gRPC. Stateless, multi-replica.</p></div>
+  <div class="card"><b>rio-scheduler</b><p>DAG-aware, critical-path scheduling. Streams work to builders. Leader-elected.</p></div>
+  <div class="card"><b>rio-builder</b><p>Executes derivations in a Nix sandbox. Lazy <code>/nix/store</code> via FUSE + local SSD cache.</p></div>
+  <div class="card"><b>rio-store</b><p>Chunked content-addressed store. FastCDC + BLAKE3 dedup. Server-side chunking.</p></div>
+  <div class="card"><b>PostgreSQL</b><p>Single shared DB. Build state, store metadata, tenants. One migration set.</p></div>
+  <div class="card"><b>S3</b><p>Deduplicated chunk blobs. Inline blobs for small NARs (&lt;256&nbsp;KiB).</p></div>
+</div>
+
+<h2>Topology</h2>
+<div class="legend"><span class="l-ssh">ssh-ng</span><span class="l-grpc">gRPC</span><span class="l-sql">SQL</span><span class="l-s3">S3</span></div>
+<div class="diagram"><pre class="mermaid">
+flowchart LR
+  C["nix client"]
+  GW["rio-gateway\n(N replicas)"]
+  S["rio-scheduler\n(leader)"]
+  ST["rio-store"]
+  B["rio-builder ×N\nFUSE + SSD cache"]
+  PG[("PostgreSQL")]
+  S3[("S3")]
+
+  C ==>|ssh-ng| GW
+  GW -->|SubmitBuild| S
+  GW -->|PutPath / GetPath| ST
+  S <-->|BuildExecution stream| B
+  B -->|GetPath / PutPath| ST
+  S -->|cache check| ST
+  S --- PG
+  ST --- PG
+  ST --- S3
+
+  linkStyle 0 stroke:#f0883e,stroke-width:2px
+  linkStyle 1,2,3,4,5 stroke:#6ea8fe
+  linkStyle 6,7 stroke:#56d364
+  linkStyle 8 stroke:#d2a8ff
+</pre></div>
+
+<h2>One build, end to end</h2>
+<div class="diagram"><pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant C as nix client
+  participant GW as gateway
+  participant S as scheduler
+  participant B as builder
+  participant ST as rio-store
+
+  C->>GW: upload .drv + sources, build request
+  GW->>S: SubmitBuild (full DAG)
+  S->>ST: which outputs already exist?
+  S->>B: WorkAssignment + prefetch hints
+  B->>ST: lazy-fetch inputs (FUSE, on read)
+  B->>B: nix sandbox build
+  B-->>S: log stream
+  S-->>GW: relay logs
+  GW-->>C: stderr
+  B->>ST: PutPath (output NAR → chunked)
+  B->>S: completion → unblocks downstream
+  GW->>ST: GetPath (final outputs)
+  GW-->>C: NAR stream
+</pre></div>
+
+<h2>Storage</h2>
+<div class="diagram"><pre class="mermaid">
+flowchart LR
+  subgraph PG ["PostgreSQL — one database"]
+    direction TB
+    sch["scheduler state\nbuilds · derivations · assignments"]
+    sto["store metadata\nnarinfo · manifests · chunks · refcounts"]
+    ten["shared\ntenants · keys · jwt"]
+  end
+  subgraph S3 ["S3 — blobs"]
+    chunks["dedup chunks\n(BLAKE3-keyed)"]
+  end
+  sto -->|refcount → delete queue| chunks
+</pre></div>
+<p class="legend">Shared DB by design: cross-domain FKs (tenants), scheduler reads narinfo for CA cutoff &amp; GC roots, single migration set with one advisory lock.</p>
+
+<footer>Generated from <code>docs/src/architecture.md</code> + <code>docs/src/data-flows.md</code>. Open in any browser; renders client-side with Mermaid.</footer>
+
+</main>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>
+  mermaid.initialize({ startOnLoad:true, theme:"dark", themeVariables:{
+    background:"#161a23", primaryColor:"#1d2330", primaryBorderColor:"#3a4257",
+    primaryTextColor:"#d6dbe5", lineColor:"#5a6378", fontFamily:"ui-sans-serif,system-ui,sans-serif"
+  }, flowchart:{curve:"basis"}, sequence:{actorMargin:36,messageFontSize:13} });
+</script>
+</body>
+</html>
