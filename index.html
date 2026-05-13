@@ -72,8 +72,7 @@ flowchart LR
 </pre></div>
 
 <h2>One build, end to end</h2>
-<p class="legend" id="seq-hint">Click the diagram (or press → / ←) to step through.</p>
-<div class="diagram" id="seq-step" style="cursor:pointer"><pre class="mermaid">
+<div class="diagram"><pre class="mermaid">
 sequenceDiagram
   autonumber
   participant C as nix client
@@ -175,58 +174,10 @@ flowchart LR
 </main>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
 <script>
-  mermaid.initialize({ startOnLoad:false, theme:"dark", themeVariables:{
+  mermaid.initialize({ startOnLoad:true, theme:"dark", themeVariables:{
     background:"#161a23", primaryColor:"#1d2330", primaryBorderColor:"#3a4257",
     primaryTextColor:"#d6dbe5", lineColor:"#5a6378", fontFamily:"ui-sans-serif,system-ui,sans-serif"
   }, flowchart:{curve:"basis"}, sequence:{actorMargin:36,messageFontSize:13} });
-
-  mermaid.run().then(() => {
-    const box = document.getElementById("seq-step");
-    const svg = box.querySelector("svg");
-    if (!svg) return;
-
-    // Group sequence-diagram elements into per-message "steps" by vertical position.
-    // Mermaid emits messageLine0/1, messageText, sequenceNumber, activations, loop boxes
-    // with no shared step id — cluster by rounded y-coordinate instead.
-    const sel = ".messageLine0,.messageLine1,.messageText,.sequenceNumber," +
-                "rect.activation0,rect.activation1,rect.activation2";
-    const els = [...svg.querySelectorAll(sel)];
-    const yOf = (el) => {
-      try { const b = el.getBBox(); return Math.round((b.y + b.height / 2) / 8) * 8; }
-      catch { return 0; }
-    };
-    const groups = new Map();
-    for (const el of els) {
-      const y = yOf(el);
-      if (!groups.has(y)) groups.set(y, []);
-      groups.get(y).push(el);
-    }
-    const steps = [...groups.entries()].sort((a, b) => a[0] - b[0]).map(([, v]) => v);
-    if (!steps.length) return;
-
-    let cur = 0; // number of visible steps
-    const apply = () => {
-      steps.forEach((els, i) => {
-        const on = i < cur;
-        for (const el of els) {
-          el.style.transition = "opacity .25s ease";
-          el.style.opacity = on ? "1" : "0.06";
-        }
-      });
-      document.getElementById("seq-hint").textContent =
-        cur >= steps.length ? "Click to restart · → / ← to step"
-                            : `Step ${cur} / ${steps.length} — click or → to advance`;
-    };
-    const fwd = () => { cur = cur >= steps.length ? 1 : cur + 1; apply(); };
-    const back = () => { cur = Math.max(0, cur - 1); apply(); };
-
-    box.addEventListener("click", fwd);
-    window.addEventListener("keydown", (e) => {
-      if (e.key === "ArrowRight" || e.key === " ") { e.preventDefault(); fwd(); }
-      if (e.key === "ArrowLeft") { e.preventDefault(); back(); }
-    });
-    apply();
-  });
 </script>
 </body>
 </html>
