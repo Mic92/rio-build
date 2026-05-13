@@ -129,19 +129,17 @@ flowchart LR
 <p class="legend">Two clients submit overlapping builds. Scheduler merges them into one graph, dedupes by store path, builds shared nodes once, and notifies every interested build on completion.</p>
 <div class="diagram"><pre class="mermaid">
 flowchart TB
-  subgraph row1 [" "]
-    direction LR
-    subgraph in1 ["build A &nbsp;(tenant&nbsp;1)"]
-      direction TB
-      a1["firefox"] --> a2["nss"] --> a3["glibc"]
-    end
-    subgraph in2 ["build B &nbsp;(tenant&nbsp;2)"]
-      direction TB
-      b1["vim"] --> b2["ncurses"] --> b3["glibc"]
-    end
+  subgraph in1 ["build A &nbsp;(tenant&nbsp;1)"]
+    direction TB
+    a1["firefox"] --> a2["nss"] --> a3["glibc"]
+  end
+  subgraph in2 ["build B &nbsp;(tenant&nbsp;2)"]
+    direction TB
+    b1["vim"] --> b2["ncurses"] --> b3["glibc"]
   end
 
-  row1 ==> M(["merge + dedup\nby store path"])
+  in1 ==> M(["merge + dedup\nby store path"])
+  in2 ==> M
 
   subgraph dag ["global DAG  ·  one node per derivation"]
     direction TB
@@ -155,7 +153,6 @@ flowchart TB
   dag ==>|"ready + not cached\n→ critical-path priority"| W["builders"]
   dag -.->|"cache hit /\nsubstitutable?"| ST[("rio-store")]
 
-  style row1 fill:none,stroke:none
   style g3 stroke:#f0883e,stroke-width:3px,fill:#231a14
   style M fill:#16243a,stroke:#6ea8fe,stroke-width:2px
 </pre></div>
