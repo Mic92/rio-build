@@ -39,7 +39,7 @@
   <div class="card"><b>rio-gateway</b><p>SSH server. Translates worker-protocol opcodes → gRPC. Stateless, multi-replica.</p></div>
   <div class="card"><b>rio-scheduler</b><p>DAG-aware, critical-path scheduling. Streams work to builders. Leader-elected.</p></div>
   <div class="card"><b>rio-builder</b><p>Executes derivations in a Nix sandbox. Lazy <code>/nix/store</code> via FUSE + local SSD cache.</p></div>
-  <div class="card"><b>rio-store</b><p>Chunked content-addressed store. FastCDC + BLAKE3 dedup. Server-side chunking.</p></div>
+  <div class="card"><b>rio-store</b><p>Chunked content-addressed store. FastCDC + BLAKE3 dedup. Server-side chunking. Stateless, multi-replica.</p></div>
   <div class="card"><b>PostgreSQL</b><p>Single shared DB. Build state, store metadata, tenants. One migration set.</p></div>
   <div class="card"><b>S3</b><p>Deduplicated chunk blobs. Inline blobs for small NARs (&lt;256&nbsp;KiB).</p></div>
 </div>
@@ -53,7 +53,7 @@ flowchart TB
   subgraph svc [" "]
     direction LR
     S["rio-scheduler\nleader-elected"]
-    ST["rio-store"]
+    ST["rio-store\nN replicas · no leader"]
   end
   B["rio-builder ×N\nFUSE + SSD cache"]
   subgraph back [" "]
@@ -110,7 +110,7 @@ sequenceDiagram
 flowchart LR
   C["nix client"]
   GW["gateway\nthin proxy — no chunking"]
-  ST["rio-store\nchunk · hash · reassemble\nall CPU-heavy work here"]
+  ST["rio-store ×N\nchunk · hash · reassemble\nall CPU-heavy work here"]
   B["builder"]
 
   C ==>|"① upload sources"| GW ==>|"①"| ST
