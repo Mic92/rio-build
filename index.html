@@ -157,49 +157,6 @@ flowchart TB
   style M fill:#16243a,stroke:#6ea8fe,stroke-width:2px
 </pre></div>
 
-<h2>rio-store — ingestion (<code>PutPath</code>)</h2>
-<p class="legend">Same path for builder output uploads and gateway <code>nix copy</code>. Server-side chunking; clients just stream bytes.</p>
-<div class="diagram"><pre class="mermaid">
-flowchart TB
-  IN(["NAR stream in"]) --> AUTH["🔑 verify token · claim placeholder · buffer + SHA-256 check\n32 GiB in-flight cap → gRPC backpressure"]
-  AUTH --> SZ{"NAR &lt; 256 KiB ?"}
-
-  SZ ==>|"yes — most .drv files"| INL["inline blob → PG bytea\nno S3 · no chunking"]
-
-  subgraph chunk ["chunked path"]
-    direction LR
-    CDC["FastCDC\n16–256 KiB · 64 KiB avg"] --> HASH["BLAKE3\nper chunk"] --> WAL["PG txn:\nmanifest + refcount UPSERT"]
-    WAL --> NEW{"new\nchunk?"}
-    NEW -->|yes| S3P["S3 PUT ×8\nchunks/{aa}/{blake3}"]
-    NEW -->|"no — dedup"| SKIP(["skip"])
-  end
-  SZ ==>|no| chunk
-
-  INL ==> DONE["PG: flip manifest → 'complete'\nnarinfo · references · content index"]
-  S3P --> DONE
-  SKIP --> DONE
-  DONE ==> OUT(["✓ stored"])
-
-  style IN fill:#16243a,stroke:#6ea8fe,stroke-width:2px
-  style OUT fill:#142414,stroke:#56d364,stroke-width:2px
-  style INL fill:#141a14,stroke:#56d364,stroke-width:2.5px
-  style SKIP fill:#141a14,stroke:#56d364
-  style CDC fill:#231a14,stroke:#f0883e,stroke-width:2px
-  style HASH fill:#231a14,stroke:#f0883e
-  style S3P fill:#1f1828,stroke:#d2a8ff,stroke-width:2px
-  style WAL fill:#16243a,stroke:#6ea8fe
-  style AUTH fill:#16243a,stroke:#6ea8fe
-  style DONE fill:#16243a,stroke:#6ea8fe,stroke-width:2px
-  style chunk fill:#191420,stroke:#3a3050,stroke-dasharray:4 3
-</pre></div>
-<div class="legend" style="margin-top:-.4rem">
-  <span style="color:#56d364">▪ fast path / dedup</span>
-  <span style="color:#f0883e">▪ CPU-heavy</span>
-  <span style="color:#6ea8fe">▪ PostgreSQL</span>
-  <span style="color:#d2a8ff">▪ S3</span>
-</div>
-<p class="legend">Write-ahead manifest in PG protects chunks from GC mid-upload — crash between manifest commit and S3 upload is reaped by the orphan scanner, not silently leaked. Chunks are content-addressed: identical libs across packages stored once.</p>
-
 <h2>Inside a builder pod</h2>
 <p class="legend">One-shot K8s pod · <code>CAP_SYS_ADMIN</code> + <code>CAP_SYS_CHROOT</code> + <code>/dev/fuse</code> · not <code>privileged</code></p>
 <div class="diagram"><pre class="mermaid">
@@ -238,6 +195,47 @@ flowchart TB
   style SBX stroke:#56d364,stroke-width:2px
 </pre></div>
 <p class="legend">FUSE cache miss → gRPC <code>GetPath</code> from rio-store → write to SSD → serve to overlay. Outputs land in the upper layer, uploaded with <code>PutPath</code>, then the pod exits. Resource use tracked per build via cgroup v2; <code>/dev/fuse</code> injected as a hostPath device.</p>
+
+<h2>rio-store — ingestion (<code>PutPath</code>)</h2>
+<p class="legend">Same path for builder output uploads and gateway <code>nix copy</code>. Server-side chunking; clients just stream bytes.</p>
+<div class="diagram"><pre class="mermaid">
+flowchart TB
+  IN(["NAR stream in"]) --> AUTH["🔑 verify token · claim placeholder · buffer + SHA-256 check\n32 GiB in-flight cap → gRPC backpressure"]
+  AUTH --> SZ{"NAR &lt; 256 KiB ?"}
+
+  SZ ==>|"yes · most .drv files"| INL["inline blob → PG bytea\nno S3 · no chunking"]
+  SZ ==>|"no"| CDC["FastCDC\n16–256 KiB · 64 KiB avg"]
+  CDC --> HASH["BLAKE3 per chunk"]
+  HASH --> WAL["PG txn: manifest\n+ refcount UPSERT"]
+  WAL --> NEW{"refcount\n== 1 ?"}
+  NEW -->|"new"| S3P["S3 PUT ×8 parallel\nchunks/{aa}/{blake3}"]
+  NEW -->|"exists · dedup"| SKIP(["skip upload"])
+
+  INL ==> DONE
+  S3P --> DONE["PG: flip manifest → 'complete'\nnarinfo · references · content index"]
+  SKIP --> DONE
+  DONE ==> OUT(["✓ stored"])
+
+  style IN fill:#16243a,stroke:#6ea8fe,stroke-width:2px
+  style OUT fill:#142414,stroke:#56d364,stroke-width:2px
+  style INL fill:#141a14,stroke:#56d364,stroke-width:2.5px
+  style SKIP fill:#141a14,stroke:#56d364
+  style CDC fill:#231a14,stroke:#f0883e,stroke-width:2px
+  style HASH fill:#231a14,stroke:#f0883e
+  style S3P fill:#1f1828,stroke:#d2a8ff,stroke-width:2px
+  style WAL fill:#16243a,stroke:#6ea8fe
+  style AUTH fill:#16243a,stroke:#6ea8fe
+  style DONE fill:#16243a,stroke:#6ea8fe,stroke-width:2px
+  style SZ fill:#1a1f29,stroke:#5a6378
+  style NEW fill:#1a1f29,stroke:#5a6378
+</pre></div>
+<div class="legend" style="margin-top:-.4rem">
+  <span style="color:#56d364">▪ fast path / dedup</span>
+  <span style="color:#f0883e">▪ CPU-heavy</span>
+  <span style="color:#6ea8fe">▪ PostgreSQL</span>
+  <span style="color:#d2a8ff">▪ S3</span>
+</div>
+<p class="legend">Write-ahead manifest in PG protects chunks from GC mid-upload — crash between manifest commit and S3 upload is reaped by the orphan scanner, not silently leaked. Chunks are content-addressed: identical libs across packages stored once.</p>
 
 <h2>Storage</h2>
 <div class="diagram"><pre class="mermaid">
