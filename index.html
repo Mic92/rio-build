@@ -96,6 +96,51 @@ sequenceDiagram
   GW-->>C: NAR stream
 </pre></div>
 
+<h2>Scheduler — derivation lifecycle</h2>
+<div class="diagram"><pre class="mermaid">
+stateDiagram-v2
+  direction LR
+  [*] --> created : DAG merge
+  created --> completed : cache hit
+  created --> queued
+  queued --> ready : deps done
+  ready --> assigned : builder picked
+  assigned --> running
+  running --> completed
+  running --> failed : retriable
+  failed --> ready : retry + backoff
+  running --> poisoned : N builders failed
+  assigned --> ready : builder lost
+  poisoned --> created : 24h TTL
+  completed --> [*]
+  poisoned --> [*]
+</pre></div>
+<p class="legend">Single in-memory DAG actor serializes all transitions; multi-build merge dedupes shared subgraphs. Ready nodes ranked by critical-path length × duration estimate × tenant priority. State persisted to PostgreSQL for leader failover.</p>
+
+<h2>Store — upload path (<code>PutPath</code>)</h2>
+<div class="diagram"><pre class="mermaid">
+flowchart LR
+  A["NAR stream in"] --> B["buffer + SHA-256 verify"]
+  B --> C["FastCDC chunk\n+ BLAKE3 each"]
+  C --> D["PG txn:\nmanifest + refcount UPSERT"]
+  D --> E{"chunk new?"}
+  E -->|yes| F["S3 PUT ×8 parallel"]
+  E -->|no| G["dedup — skip"]
+  F --> H["PG: mark complete\n+ narinfo + refs"]
+  G --> H
+</pre></div>
+<p class="legend">Chunking + hashing is server-side — gateway and builders just stream bytes. Write-ahead manifest in PG protects chunks from GC mid-upload. In-flight NAR bytes capped at 32&nbsp;GiB (semaphore → gRPC backpressure, no OOM).</p>
+
+<h2>Who moves bytes where</h2>
+<table>
+<tr><th>Path</th><th>Route</th><th>CPU heavy step</th><th>Where it runs</th></tr>
+<tr><td>Source upload</td><td>client → gateway → store</td><td>chunk + hash</td><td>rio-store</td></tr>
+<tr><td>Build inputs</td><td>store → builder (FUSE, lazy)</td><td>NAR reassembly</td><td>rio-store</td></tr>
+<tr><td>Build outputs</td><td>builder → store (direct)</td><td>chunk + hash</td><td>rio-store</td></tr>
+<tr><td>Result download</td><td>store → gateway → client</td><td>NAR reassembly</td><td>rio-store</td></tr>
+</table>
+<p class="legend">Yes — rio-store is in the path of every byte. Gateway only proxies the client-facing legs (no chunking/hashing on it). Build I/O between builders and store never touches the gateway. ssh-ng has no payload compression; only ssh transport-level zlib.</p>
+
 <h2>Storage</h2>
 <div class="diagram"><pre class="mermaid">
 flowchart LR
