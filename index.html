@@ -157,6 +157,53 @@ flowchart TB
   style M fill:#16243a,stroke:#6ea8fe,stroke-width:2px
 </pre></div>
 
+<h2>Inside a builder pod</h2>
+<p class="legend">One-shot K8s pod · <code>CAP_SYS_ADMIN</code> + <code>CAP_SYS_CHROOT</code> + <code>/dev/fuse</code> · not <code>privileged</code></p>
+<div class="diagram"><pre class="mermaid">
+flowchart TB
+  subgraph node ["K8s node"]
+    subgraph pod ["builder pod · one build, then exits"]
+      RB["rio-builder process\ngRPC · FUSE daemon · cgroup tracking"]
+
+      subgraph ed ["emptyDir on local SSD"]
+        direction LR
+        FC["/var/rio/cache\nFUSE chunk cache"]
+        OV["/var/rio/overlays/{build}\nupper + work"]
+      end
+
+      FM["/var/rio/fuse-store\nFUSE mount — lazy /nix/store"]
+      OM["{build_dir}/nix/store\noverlayfs merged\nlower=FUSE · upper=SSD + synthetic SQLite"]
+
+      subgraph ns ["child mount namespace"]
+        ND["nix-daemon --stdio\n--store local?root={build_dir}"]
+        SBX["nix sandbox\nunshare + bind inputs + pivot_root"]
+        ND --> SBX
+      end
+
+      RB -->|"mount"| FM
+      RB -->|"mount"| OM
+      RB -->|"fork + unshare(CLONE_NEWNS)"| ND
+      FC -.->|"backs"| FM
+      FM -->|"lowerdir"| OM
+      OV -->|"upperdir"| OM
+      OM -->|"chroot store"| SBX
+    end
+    DEV["/dev/fuse\nhostPath · char 10:229"]
+    CG["cgroup v2\nper-build sub-cgroup"]
+  end
+  ST["rio-store"]
+
+  DEV -.-> RB
+  RB -.-> CG
+  RB <-->|"GetPath / PutPath gRPC"| ST
+
+  style FM stroke:#6ea8fe,stroke-width:2px
+  style OM stroke:#f0883e,stroke-width:2px
+  style ns fill:#15191f,stroke:#3a4257,stroke-dasharray:4 3
+  style ed fill:#141a14,stroke:#2e4030
+</pre></div>
+<p class="legend">Cache miss in FUSE → gRPC <code>GetPath</code> from rio-store, written to SSD cache, served to overlay. Build outputs land in the upper layer; uploaded with <code>PutPath</code>, then the pod is discarded.</p>
+
 <h2>Storage</h2>
 <div class="diagram"><pre class="mermaid">
 flowchart LR
