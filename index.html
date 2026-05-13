@@ -141,7 +141,7 @@ flowchart TB
   in1 ==> M(["merge + dedup\nby store path"])
   in2 ==> M
 
-  subgraph dag ["global DAG  ·  one node per derivation"]
+  subgraph dag ["global DAG · in-memory in scheduler · one node per derivation"]
     direction TB
     g1["firefox\nbuilds:{A}"] --> g2["nss\nbuilds:{A}"]
     g4["vim\nbuilds:{B}"] --> g5["ncurses\nbuilds:{B}"]
