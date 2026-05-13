@@ -117,20 +117,6 @@ stateDiagram-v2
 </pre></div>
 <p class="legend">Single in-memory DAG actor serializes all transitions; multi-build merge dedupes shared subgraphs. Ready nodes ranked by critical-path length × duration estimate × tenant priority. State persisted to PostgreSQL for leader failover.</p>
 
-<h2>Store — upload path (<code>PutPath</code>)</h2>
-<div class="diagram"><pre class="mermaid">
-flowchart LR
-  A["NAR stream in"] --> B["buffer + SHA-256 verify"]
-  B --> C["FastCDC chunk\n+ BLAKE3 each"]
-  C --> D["PG txn:\nmanifest + refcount UPSERT"]
-  D --> E{"chunk new?"}
-  E -->|yes| F["S3 PUT ×8 parallel"]
-  E -->|no| G["dedup — skip"]
-  F --> H["PG: mark complete\n+ narinfo + refs"]
-  G --> H
-</pre></div>
-<p class="legend">Chunking + hashing is server-side — gateway and builders just stream bytes. Write-ahead manifest in PG protects chunks from GC mid-upload. In-flight NAR bytes capped at 32&nbsp;GiB (semaphore → gRPC backpressure, no OOM).</p>
-
 <h2>Who moves bytes where</h2>
 <div class="diagram"><pre class="mermaid">
 flowchart LR
