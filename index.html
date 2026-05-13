@@ -152,13 +152,6 @@ flowchart TB
   style g3 stroke:#f0883e,stroke-width:3px
   style M fill:#1d2330,stroke:#6ea8fe
 </pre></div>
-<ul style="margin-top:-.4rem">
-  <li><b>Dedup</b> by store path (input-addressed) or modular hash (CA). Shared <code>glibc</code> exists once.</li>
-  <li><b>Priority</b> of a shared node = max over all interested builds; recomputed on merge.</li>
-  <li><b>Cache check</b> at merge time: already in store, or fetchable from upstream cache &rarr; mark completed, never dispatch.</li>
-  <li><b>Ready queue</b> = nodes with all deps done, ordered by critical-path length &times; duration estimate.</li>
-  <li><b>Failures</b>: retry with backoff; after N distinct builders fail &rarr; <em>poisoned</em>, dependents fail fast.</li>
-</ul>
 
 <h2>Storage</h2>
 <div class="diagram"><pre class="mermaid">
