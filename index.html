@@ -96,26 +96,44 @@ sequenceDiagram
   GW-->>C: NAR stream
 </pre></div>
 
-<h2>Scheduler — derivation lifecycle</h2>
+<h2>Scheduler — one global DAG, many builds</h2>
+<p class="legend">Two clients submit overlapping builds. Scheduler merges them into one graph, dedupes by store path, builds shared nodes once, and notifies every interested build on completion.</p>
 <div class="diagram"><pre class="mermaid">
-stateDiagram-v2
-  direction LR
-  [*] --> created : DAG merge
-  created --> completed : cache hit
-  created --> queued
-  queued --> ready : deps done
-  ready --> assigned : builder picked
-  assigned --> running
-  running --> completed
-  running --> failed : retriable
-  failed --> ready : retry + backoff
-  running --> poisoned : N builders failed
-  assigned --> ready : builder lost
-  poisoned --> created : 24h TTL
-  completed --> [*]
-  poisoned --> [*]
+flowchart TB
+  subgraph in1 ["build A &nbsp;(tenant&nbsp;1)"]
+    direction TB
+    a1["firefox"] --> a2["nss"] --> a3["glibc"]
+  end
+  subgraph in2 ["build B &nbsp;(tenant&nbsp;2)"]
+    direction TB
+    b1["vim"] --> b2["ncurses"] --> b3["glibc"]
+  end
+
+  in1 ==> M(["merge + dedup"])
+  in2 ==> M
+
+  subgraph dag ["global DAG  ·  one node per derivation"]
+    direction TB
+    g1["firefox\nbuilds:{A}"] --> g2["nss\nbuilds:{A}"]
+    g4["vim\nbuilds:{B}"] --> g5["ncurses\nbuilds:{B}"]
+    g2 --> g3["glibc\nbuilds:{A,B}\nbuilt once"]
+    g5 --> g3
+  end
+  M ==> dag
+
+  g3 -.->|cache hit / substitute?| ST[("rio-store")]
+  dag ==>|"ready &amp; not cached\n→ critical-path priority queue"| W["builders"]
+
+  style g3 stroke:#f0883e,stroke-width:3px
+  style M fill:#1d2330,stroke:#6ea8fe
 </pre></div>
-<p class="legend">Single in-memory DAG actor serializes all transitions; multi-build merge dedupes shared subgraphs. Ready nodes ranked by critical-path length × duration estimate × tenant priority. State persisted to PostgreSQL for leader failover.</p>
+<ul style="margin-top:-.4rem">
+  <li><b>Dedup</b> by store path (input-addressed) or modular hash (CA). Shared <code>glibc</code> exists once.</li>
+  <li><b>Priority</b> of a shared node = max over all interested builds; recomputed on merge.</li>
+  <li><b>Cache check</b> at merge time: already in store, or fetchable from upstream cache &rarr; mark completed, never dispatch.</li>
+  <li><b>Ready queue</b> = nodes with all deps done, ordered by critical-path length &times; duration estimate.</li>
+  <li><b>Failures</b>: retry with backoff; after N distinct builders fail &rarr; <em>poisoned</em>, dependents fail fast.</li>
+</ul>
 
 <h2>Who moves bytes where</h2>
 <div class="diagram"><pre class="mermaid">
