@@ -5125,6 +5125,7 @@ dependencies = [
  "cfg-if",
  "cfg_aliases",
  "libc",
+ "memoffset",
 ]
 
 [[package]]
@@ -6763,6 +6764,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64",
+ "blake3",
  "ed25519-dalek 2.2.0",
  "hex",
  "proptest",

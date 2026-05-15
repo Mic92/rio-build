@@ -16122,6 +16122,10 @@
         {
           "name": "libc",
           "packageId": "libc"
+        },
+        {
+          "name": "memoffset",
+          "packageId": "memoffset"
         }
       ],
       "buildDependencies": [
@@ -16135,11 +16139,13 @@
         "feature",
         "fs",
         "hostname",
+        "memoffset",
         "mman",
         "mount",
         "process",
         "sched",
         "signal",
+        "socket",
         "uio",
         "user"
       ],
@@ -20833,6 +20839,22 @@
         {
           "name": "rio-builder",
           "path": "src/main.rs"
+        },
+        {
+          "name": "spike_digest_fuse",
+          "path": "src/bin/spike_digest_fuse.rs"
+        },
+        {
+          "name": "spike_mountd",
+          "path": "src/bin/spike_mountd.rs"
+        },
+        {
+          "name": "spike_negdentry_fuse",
+          "path": "src/bin/spike_negdentry_fuse.rs"
+        },
+        {
+          "name": "spike_stream_fuse",
+          "path": "src/bin/spike_stream_fuse.rs"
         }
       ],
       "libCrateTypes": [
@@ -21531,6 +21553,10 @@
         {
           "name": "base64",
           "packageId": "base64"
+        },
+        {
+          "name": "blake3",
+          "packageId": "blake3"
         },
         {
           "name": "ed25519-dalek",
