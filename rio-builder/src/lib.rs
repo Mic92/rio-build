@@ -38,6 +38,7 @@ pub mod log_stream;
 pub(crate) mod overlay;
 pub mod quota;
 pub mod runtime;
+pub mod store_fetch;
 pub(crate) mod synth_db;
 pub(crate) mod upload;
 
