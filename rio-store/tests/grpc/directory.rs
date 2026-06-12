@@ -9,7 +9,6 @@
 
 use std::sync::Arc;
 
-use bytes::Bytes;
 use prost::Message;
 use sha2::Digest as _;
 use tokio_stream::StreamExt;
@@ -216,7 +215,7 @@ async fn fixture_with_chunk_cache(with_cache: bool) -> Fixture {
 /// returns both bodies; non-recursive returns one; cross-tenant calls
 /// see nothing.
 // r[verify store.castore.directory-rpc]
-// r[verify store.castore.tenant-scope+2]
+// r[verify store.castore.tenant-scope+3]
 #[tokio::test]
 async fn get_directory_recursive_and_tenant_scoped() {
     let mut f = fixture().await;
@@ -314,7 +313,7 @@ async fn get_directory_recursive_and_tenant_scoped() {
 
 /// Bitmap responses: bit i ⇔ digests[i] present and tenant-visible.
 // r[verify store.castore.directory-rpc]
-// r[verify store.castore.tenant-scope+2]
+// r[verify store.castore.tenant-scope+3]
 #[tokio::test]
 async fn has_directories_and_blobs_bitmaps() {
     let mut f = fixture().await;
@@ -511,7 +510,7 @@ async fn seed_blob(f: &Fixture, name: &str, b: &BlobNar, chunk_size: Option<usiz
         for piece in b.nar.chunks(chunk_size) {
             let hash: [u8; 32] = blake3::hash(piece).into();
             f.chunks
-                .put(&hash, Bytes::copy_from_slice(piece))
+                .put(&hash, rio_store::cas::compress_chunk(piece))
                 .await
                 .unwrap();
             entries.push(ManifestEntry {
@@ -634,7 +633,7 @@ async fn read_blob_single_chunk_skip_and_take() {
 /// Cross-tenant: a digest tenant A produced is NotFound for tenant B,
 /// same status as an unknown digest, so the RPC isn't a presence oracle.
 // r[verify store.castore.blob-read]
-// r[verify store.castore.tenant-scope+2]
+// r[verify store.castore.tenant-scope+3]
 #[tokio::test]
 async fn read_blob_tenant_scoped() {
     let mut f = fixture().await;
@@ -762,8 +761,13 @@ async fn reassemble_stat(f: &Fixture, resp: &StatBlobResponse) -> Vec<u8> {
     let mut body = Vec::new();
     for (i, c) in resp.chunks.iter().enumerate() {
         let digest: [u8; 32] = c.digest.as_slice().try_into().unwrap();
-        let bytes = f.chunks.get(&digest).await.unwrap().unwrap();
-        assert_eq!(bytes.len() as u64, c.size, "ChunkMeta.size matches store");
+        let stored = f.chunks.get(&digest).await.unwrap().unwrap();
+        let bytes = rio_store::cas::decode_stored_chunk(&digest, stored).unwrap();
+        assert_eq!(
+            bytes.len() as u64,
+            c.size,
+            "ChunkMeta.size is plaintext size"
+        );
         let start = if i == 0 {
             resp.first_chunk_skip as usize
         } else {
@@ -915,7 +919,7 @@ async fn stat_blob_inline_failed_precondition() {
 /// Cross-tenant: a digest tenant A produced is NotFound for tenant B,
 /// same status as an unknown digest.
 // r[verify store.castore.blob-stat]
-// r[verify store.castore.tenant-scope+2]
+// r[verify store.castore.tenant-scope+3]
 #[tokio::test]
 async fn stat_blob_tenant_scoped() {
     let mut f = fixture().await;
@@ -1089,7 +1093,7 @@ async fn seed_subst_only_blob(
         for piece in b.nar.chunks(chunk_size) {
             let hash: [u8; 32] = blake3::hash(piece).into();
             f.chunks
-                .put(&hash, Bytes::copy_from_slice(piece))
+                .put(&hash, rio_store::cas::compress_chunk(piece))
                 .await
                 .unwrap();
             entries.push(ManifestEntry {
@@ -1184,7 +1188,7 @@ async fn seed_subst_only_dir(
 /// of substituted inputs fail forever. Tenant B (no matching trusted
 /// key) must stay denied on every RPC: the fallback is per-caller,
 /// never "substituted ⇒ global".
-// r[verify store.castore.tenant-scope+2]
+// r[verify store.castore.tenant-scope+3]
 // r[verify store.substitute.tenant-sig-visibility+2]
 #[tokio::test]
 async fn sig_visible_substituted_paths_readable() {
@@ -1368,7 +1372,7 @@ async fn sig_visible_substituted_paths_readable() {
 /// junction-gated, full stop — a trusted signature must NOT bypass
 /// the I-217 isolation policy (built-by-another ⇒ hidden), matching
 /// `sig_visibility_gate`'s precedence.
-// r[verify store.castore.tenant-scope+2]
+// r[verify store.castore.tenant-scope+3]
 #[tokio::test]
 async fn sig_fallback_requires_substitution_only() {
     let mut f = fixture().await;
@@ -1446,7 +1450,7 @@ async fn sig_fallback_requires_substitution_only() {
 /// MUST NOT be reported valid to a caller whose castore reads of it
 /// would fail". Four fixture classes × two tenants.
 // r[verify store.tenant.valid-paths-filter]
-// r[verify store.castore.tenant-scope+2]
+// r[verify store.castore.tenant-scope+3]
 #[tokio::test]
 async fn read_surface_matches_sig_visibility_gate() {
     use rio_proto::StoreServiceServer;
