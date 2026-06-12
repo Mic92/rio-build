@@ -1406,6 +1406,59 @@ than in a scheduler-side stream count.
 
 = Multi-Build DAG Merging
 
+== Digest-Bearing Submissions (ADR-024 P2a)
+
+#r("sched.submit.digest-edges")[
+  When every node of a `SubmitBuild` submission carries `drv_digest`
+  (`blake3` of the canonical proto drv bytes), dependency edges MUST be
+  derived from each node's `input_drv_digests` and the request's `edges`
+  list MUST be ignored. A mixed submission --- some nodes with `drv_digest`,
+  some without (including a digest-less node that carries
+  `input_drv_digests`) --- MUST be rejected with `INVALID_ARGUMENT`; there
+  are no silent half-modes. A submission with no digest fields at all keeps
+  the legacy `edges` semantics unchanged.
+]
+
+Rationale: edges are ignored in digest mode, so a node admitted without
+digest references would silently lose all its dependency edges and dispatch
+concurrently with its inputs --- the C13 silent mis-build window, not a
+reject. Input digests resolve against the submission's own nodes first;
+a digest that instead resolves in the store's `drv_blobs` yields an edge to
+the stored `drv_path`, which the merge keeps when that derivation is part of
+a live build and drops (warn-skip) when it is not.
+
+#r("sched.submit.digest-verify")[
+  Before a digest-bearing submission is accepted, the scheduler MUST verify
+  that every referenced digest --- each node's own `drv_digest` and every
+  `input_drv_digests` entry not matched in-submission --- exists in the
+  store's `drv_blobs`, tenant-scoped exactly like `HasDrvs`. The reject MUST
+  list ALL missing digests (`FAILED_PRECONDITION`), not first-fail, so the
+  client's stale-ack recovery can re-`Has` exactly that list, re-upload, and
+  resubmit. A node whose own digest resolves to a different stored
+  `drv_path` than the skeleton claims MUST be rejected. If verification
+  cannot be performed (database unavailable), the submission MUST be
+  rejected --- never accepted unverified.
+]
+
+#r("sched.submit.paginate")[
+  `SubmitBuild` MUST support paginated submissions above the single-message
+  budget (~50k skeleton nodes at the measured 334B/node against the 16MB
+  budget): pages share a client-chosen `submission_id`, are staged keyed by
+  `(attested tenant, submission_id)`, and non-final pages are acknowledged
+  with an empty, immediately-closed event stream. The final page assembles
+  every staged page plus itself into one submission that flows through the
+  SAME validation, digest classification, and bulk-verify as an unpaged
+  request --- pagination changes transport framing, never acceptance
+  semantics. Staged pages MUST be bounded (global node cap) and expire when
+  no final page arrives.
+]
+
+The scheduler additionally accepts and sends zstd-compressed messages on
+`SchedulerService` (skeletons compress at a measured 0.235 ratio);
+compression is negotiated per gRPC `grpc-accept-encoding`, so legacy
+clients are unaffected, and the scheduler-first deploy order guarantees the
+server accepts zstd before any client sends it.
+
 #r("sched.merge.dedup")[
   The scheduler maintains a single global DAG across all concurrent build
   requests. When a new derivation DAG arrives from the gateway, it is merged

@@ -535,6 +535,29 @@ impl DagActor {
             let build_id = p.ingest.build_id;
             self.note_created_materialization_jobs(&p.ingest.created_jobs)
                 .await;
+            // r[impl store.drv.gc-build-pinned]
+            // Pin every non-terminal submission node's own .drv path
+            // so the store's drv-blob sweep keeps its blob alive while
+            // the build is live. Runs post-commit so a rejected merge
+            // pins nothing; pre-existing terminal nodes are skipped
+            // (no later transition would unpin them). Best-effort like
+            // every other live-pin write — the 24h GC grace covers a
+            // PG blip here.
+            let pin_pairs: Vec<(&str, &str)> = p
+                .ingest
+                .nodes
+                .iter()
+                .filter(|n| {
+                    self.dag
+                        .node(&n.drv_hash)
+                        .is_some_and(|s| !s.status().is_terminal())
+                })
+                .map(|n| (n.drv_hash.as_str(), n.drv_path.as_str()))
+                .collect();
+            if let Err(e) = self.db.pin_drv_paths(&pin_pairs).await {
+                warn!(%build_id, count = pin_pairs.len(), error = %e,
+                      "failed to pin drv paths for live build (best-effort)");
+            }
             let rx = self.finish_merge_dag(p.ingest).await;
             self.send_merge_reply(build_id, reply, rx).await;
         }
@@ -761,15 +784,38 @@ impl DagActor {
                     });
                 }
             }
+            // An endpoint that is not in the DAG AT ALL was already
+            // warn-skipped by `dag.merge`'s edge loop (legacy: a stray
+            // edge to a path outside the submission; ADR-024 digest
+            // mode: an external input digest that resolved in
+            // `drv_blobs` but belongs to no live build). Skip it here
+            // too so PG matches the in-memory DAG instead of failing
+            // the whole batch over an edge no merge applied.
+            // `MissingDbId` remains for the true invariant violation:
+            // endpoint IS a DAG node but has no db_id from this tx's
+            // id_map nor a prior merge.
+            let endpoint = |drv_path: &String| -> Result<Option<Uuid>, ActorError> {
+                match resolve(drv_path) {
+                    Some(id) => Ok(Some(id)),
+                    None if self.dag.hash_for_path(drv_path).is_none() => {
+                        warn!(
+                            %drv_path,
+                            "edge endpoint not in DAG; skipping edge persist \
+                             (mirrors dag.merge's warn-skip)"
+                        );
+                        Ok(None)
+                    }
+                    None => Err(ActorError::MissingDbId {
+                        drv_path: drv_path.clone(),
+                    }),
+                }
+            };
             for e in &p.edges {
-                let parent =
-                    resolve(&e.parent_drv_path).ok_or_else(|| ActorError::MissingDbId {
-                        drv_path: e.parent_drv_path.clone(),
-                    })?;
-                let child = resolve(&e.child_drv_path).ok_or_else(|| ActorError::MissingDbId {
-                    drv_path: e.child_drv_path.clone(),
-                })?;
-                all_edges.insert((parent, child));
+                if let (Some(parent), Some(child)) =
+                    (endpoint(&e.parent_drv_path)?, endpoint(&e.child_drv_path)?)
+                {
+                    all_edges.insert((parent, child));
+                }
             }
         }
         *culprit = 0;
@@ -2002,6 +2048,11 @@ impl DagActor {
                 )
                 .await;
             }
+            // Terminal without dispatch: release the merge-time drv
+            // pins (r[store.drv.gc-build-pinned]) — the worker
+            // completion path that normally unpins never runs for a
+            // cache hit.
+            self.unpin_best_effort_batch(&hashes).await;
         }
         // Fan-out: collect OTHER builds interested in cache-completed
         // nodes + emit DerivationCached to each. Caller does
@@ -2326,6 +2377,15 @@ impl DagActor {
                     );
                 }
             }
+        }
+        // Terminal without dispatch: nodes seeded DependencyFailed (dep
+        // already poisoned at merge) were pinned in phase 5 — they were
+        // still `Created` then — and get no later terminal transition
+        // to release the merge-time drv pin
+        // (r[store.drv.gc-build-pinned]). Unpin here.
+        let depfailed: Vec<&str> = by_status[2].iter().map(DrvHash::as_str).collect();
+        if !depfailed.is_empty() {
+            self.unpin_best_effort_batch(&depfailed).await;
         }
         first_dep_failed
     }

@@ -145,6 +145,31 @@ impl SchedulerService for SchedulerGrpc {
             ));
         }
 
+        // Paginated submission: non-final pages are staged
+        // keyed by (attested tenant, submission_id) and acked with an
+        // empty, immediately-closed event stream; the final page
+        // assembles every staged page plus itself and falls through to
+        // the SAME validation + digest bulk-verify as an unpaged
+        // request. Unpaged requests (empty submission_id) pass through
+        // untouched.
+        // r[impl sched.submit.paginate]
+        let req = match super::paginate::stage_or_assemble(&self.staged_pages, caller_tenant, req)?
+        {
+            super::paginate::PageOutcome::Staged { total_nodes } => {
+                let (_tx, rx) = tokio::sync::mpsc::channel(1);
+                let mut resp = Response::new(ReceiverStream::new(rx));
+                resp.metadata_mut().insert(
+                    "x-rio-staged-nodes",
+                    total_nodes
+                        .to_string()
+                        .parse()
+                        .expect("usize decimal string is always valid ASCII metadata"),
+                );
+                return Ok(resp);
+            }
+            super::paginate::PageOutcome::Ready(assembled) => *assembled,
+        };
+
         // Validate DAG nodes before passing to the actor. Proto types have
         // all-public fields with no validation; an empty drv_hash would
         // become a DAG primary key, empty drv_path breaks the reverse
@@ -289,6 +314,55 @@ impl SchedulerService for SchedulerGrpc {
             .precompute_fmp_probe(&req.nodes, jwt_token.as_deref())
             .await;
 
+        // ADR-024: digest-bearing submissions derive edges from
+        // input_drv_digests; the request's `edges` list is ignored for
+        // them (legacy submissions keep it unchanged). Every referenced
+        // digest is bulk-verified against the store's drv_blobs BEFORE
+        // the actor sees the submission: a digest that resolves neither
+        // in-submission nor in the store is a FAILED_PRECONDITION
+        // reject naming ALL missing digests (the client re-Has-es,
+        // re-uploads, resubmits). Store verification runs after tenant
+        // resolve because presence is tenant-scoped, mirroring HasDrvs.
+        let edges = match super::digest_submit::classify_and_derive_edges(&req.nodes)? {
+            None => req.edges,
+            Some(d) => {
+                // Deny-on-failure: digest submissions cannot be
+                // accepted without verifying their blobs exist.
+                let db = self.db.as_ref().ok_or_else(|| {
+                    Status::failed_precondition(
+                        "digest-bearing submission requires a database connection",
+                    )
+                })?;
+                let mut referenced: Vec<Vec<u8>> =
+                    d.own.iter().map(|(digest, _)| digest.clone()).collect();
+                referenced.extend(d.external.iter().map(|(_, digest)| digest.clone()));
+                referenced.sort();
+                referenced.dedup();
+                // r[impl sched.submit.digest-verify]
+                let resolved = db
+                    .resolve_drv_digests(&referenced, tenant_id)
+                    .await
+                    .map_err(|e| {
+                        tracing::error!(error = %e, "drv digest bulk-verify query failed");
+                        Status::unavailable(
+                            "drv digest verification unavailable; retry the submission",
+                        )
+                    })?;
+                let external_edges = super::digest_submit::verify_resolved(&d, &resolved)?;
+                let mut edges = d.edges;
+                edges.extend(external_edges);
+                // classify_and_derive_edges bounded the IN-submission
+                // edges; re-check now that store-resolved external
+                // references were appended.
+                rio_common::grpc::check_bound(
+                    "edges",
+                    edges.len(),
+                    rio_common::limits::MAX_DAG_EDGES,
+                )?;
+                edges
+            }
+        };
+
         // Capture the current span's traceparent BEFORE sending to the
         // actor. Span context does not cross the mpsc channel boundary;
         // the actor task's flush runs under its own root. Carrying
@@ -306,7 +380,7 @@ impl SchedulerService for SchedulerGrpc {
                     .status_invalid("priority_class")?
             },
             nodes: req.nodes,
-            edges: req.edges,
+            edges,
             options,
             keep_going: req.keep_going,
             traceparent,
