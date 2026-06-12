@@ -603,6 +603,23 @@ fn backdate(path: &std::path::Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Backdate every regular file in a tree. The tree-level racy rule
+/// tracks regular-file mtimes only (the only entries that can mutate
+/// stat-invisibly), so this is what makes a freshly written fixture
+/// tree trustable.
+fn backdate_tree(root: &std::path::Path) -> anyhow::Result<()> {
+    for entry in std::fs::read_dir(root)? {
+        let entry = entry?;
+        let ft = entry.file_type()?;
+        if ft.is_dir() {
+            backdate_tree(&entry.path())?;
+        } else if ft.is_file() {
+            backdate(&entry.path())?;
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn fingerprint_hit_and_invalidation() -> anyhow::Result<()> {
     let dir = tempfile::tempdir()?;
@@ -950,7 +967,7 @@ fn warm_walks_decode_each_directory_once() -> anyhow::Result<()> {
     assert!(store.stats().count("dir_cache_hit") > 0);
 
     // Fingerprint hit path: zero re-hash, zero re-ingest, zero writes.
-    backdate(&tree)?;
+    backdate_tree(&tree)?;
     let key = EvalStore::method_key("tree", CaMethod::NixArchive, &[]);
     store.fingerprint_record(tree.to_str().unwrap(), &key, &result.path)?;
     let writes_before = (
@@ -974,6 +991,186 @@ fn warm_walks_decode_each_directory_once() -> anyhow::Result<()> {
     assert_eq!(
         writes_before, writes_after,
         "a fingerprint hit must not ingest, hash, or write anything"
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Tree-level fingerprint shortcut (ADR-024 warm path: "the stat
+// fingerprint index skips unchanged trees entirely").
+// ---------------------------------------------------------------------------
+
+/// Snapshot of every counter a tree re-ingest (or any content hashing)
+/// would move. A fingerprint hit must leave all of them untouched.
+fn ingest_op_counts(store: &EvalStore) -> Vec<(&'static str, u64)> {
+    [
+        "add_source_tree",
+        "dirblob_write",
+        "dirblob_dedup",
+        "chunkmeta_write",
+        "meta_write",
+        "fetched_write",
+    ]
+    .into_iter()
+    .map(|op| (op, store.stats().count(op)))
+    .collect()
+}
+
+/// Warm unchanged tree: the lookup is a stat-walk only — zero ingest
+/// ops, zero hashing, zero pack writes.
+#[test]
+fn tree_fingerprint_hit_skips_ingest() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let store = open_store(&dir);
+    let tree = dir.path().join("tree");
+    write_source_tree(&tree)?;
+    backdate_tree(&tree)?;
+
+    let result = store.add_source_tree(
+        tree.to_str().unwrap(),
+        "tree",
+        &[],
+        &mut nix_path_for_tree("tree"),
+    )?;
+    let key = EvalStore::method_key("tree", CaMethod::NixArchive, &[]);
+    store.fingerprint_record(tree.to_str().unwrap(), &key, &result.path)?;
+
+    let before = ingest_op_counts(&store);
+    assert_eq!(
+        store.fingerprint_lookup(tree.to_str().unwrap(), &key)?,
+        Some(result.path.clone()),
+        "unchanged tree must hit"
+    );
+    assert_eq!(store.stats().count("fingerprint_hit"), 1);
+    assert_eq!(
+        before,
+        ingest_op_counts(&store),
+        "a tree fingerprint hit must not ingest, hash, or write anything"
+    );
+    Ok(())
+}
+
+/// A single changed, added, or removed file invalidates the whole tree
+/// record; the next add is a full re-ingest (P1: no partial re-ingest).
+#[test]
+fn tree_fingerprint_any_change_forces_full_reingest() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let store = open_store(&dir);
+    let tree = dir.path().join("tree");
+    write_source_tree(&tree)?;
+    backdate_tree(&tree)?;
+    let result = store.add_source_tree(
+        tree.to_str().unwrap(),
+        "tree",
+        &[],
+        &mut nix_path_for_tree("tree"),
+    )?;
+    let key = EvalStore::method_key("tree", CaMethod::NixArchive, &[]);
+    store.fingerprint_record(tree.to_str().unwrap(), &key, &result.path)?;
+    assert!(
+        store
+            .fingerprint_lookup(tree.to_str().unwrap(), &key)?
+            .is_some()
+    );
+
+    // Touch one nested file → miss → the next add re-ingests fully.
+    std::fs::write(tree.join("src/lib.rs"), b"pub fn answer() -> u32 { 7 }\n")?;
+    assert_eq!(
+        store.fingerprint_lookup(tree.to_str().unwrap(), &key)?,
+        None,
+        "changed nested file must invalidate the tree record"
+    );
+    let adds_before = store.stats().count("add_source_tree");
+    let changed = store.add_source_tree(
+        tree.to_str().unwrap(),
+        "tree",
+        &[],
+        &mut nix_path_for_tree("tree"),
+    )?;
+    assert_eq!(
+        store.stats().count("add_source_tree"),
+        adds_before + 1,
+        "the miss must be followed by a full re-ingest"
+    );
+    assert_ne!(changed.path, result.path, "changed content, changed path");
+
+    // A new file invalidates (entry set changed).
+    backdate_tree(&tree)?;
+    store.fingerprint_record(tree.to_str().unwrap(), &key, &changed.path)?;
+    assert!(
+        store
+            .fingerprint_lookup(tree.to_str().unwrap(), &key)?
+            .is_some()
+    );
+    std::fs::write(tree.join("NEW"), b"new\n")?;
+    backdate(&tree.join("NEW"))?;
+    assert_eq!(
+        store.fingerprint_lookup(tree.to_str().unwrap(), &key)?,
+        None,
+        "added file must invalidate the tree record"
+    );
+
+    // A removed file invalidates too.
+    std::fs::remove_file(tree.join("NEW"))?;
+    store.fingerprint_record(tree.to_str().unwrap(), &key, &changed.path)?;
+    assert!(
+        store
+            .fingerprint_lookup(tree.to_str().unwrap(), &key)?
+            .is_some()
+    );
+    std::fs::remove_file(tree.join("README"))?;
+    assert_eq!(
+        store.fingerprint_lookup(tree.to_str().unwrap(), &key)?,
+        None,
+        "removed file must invalidate the tree record"
+    );
+    Ok(())
+}
+
+/// Racy rule, per file: a record written while any regular file's mtime
+/// is within the coarse-clock slack could mask a same-size in-place
+/// rewrite of that file — distrust the whole tree record.
+#[test]
+fn tree_fingerprint_distrusts_same_tick_files() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let store = open_store(&dir);
+    let tree = dir.path().join("tree");
+    write_source_tree(&tree)?;
+    let result = store.add_source_tree(
+        tree.to_str().unwrap(),
+        "tree",
+        &[],
+        &mut nix_path_for_tree("tree"),
+    )?;
+    let key = EvalStore::method_key("tree", CaMethod::NixArchive, &[]);
+
+    // Record immediately after writing the tree: file mtimes ≈ record
+    // time → distrusted, re-ingest path.
+    store.fingerprint_record(tree.to_str().unwrap(), &key, &result.path)?;
+    assert_eq!(
+        store.fingerprint_lookup(tree.to_str().unwrap(), &key)?,
+        None,
+        "tree with same-tick file mtimes must be distrusted"
+    );
+
+    // One still-fresh file among otherwise old ones keeps the record
+    // distrusted (the rule is per file, not root-only).
+    backdate_tree(&tree)?;
+    std::fs::write(tree.join("README"), b"docs\n")?;
+    store.fingerprint_record(tree.to_str().unwrap(), &key, &result.path)?;
+    assert_eq!(
+        store.fingerprint_lookup(tree.to_str().unwrap(), &key)?,
+        None,
+        "a single same-tick file must distrust the tree record"
+    );
+
+    // All files safely older than the record → trusted.
+    backdate_tree(&tree)?;
+    store.fingerprint_record(tree.to_str().unwrap(), &key, &result.path)?;
+    assert_eq!(
+        store.fingerprint_lookup(tree.to_str().unwrap(), &key)?,
+        Some(result.path),
+        "backdated tree must hit"
     );
     Ok(())
 }
@@ -1113,20 +1310,75 @@ mod ffi_smoke {
             serde_json::from_str(&take_string(info_json).expect("info"))?;
         assert_eq!(info["nar_size"].as_u64(), Some(dump.len() as u64));
 
-        // readDirectory through FFI: names + kinds as JSON.
+        // readDirectory through FFI: flat buffer — u32 count, then per
+        // entry u8 kind, u32 name_len, raw name bytes (little-endian).
         let rel = CString::new("")?;
-        let mut dir_json: *mut c_char = std::ptr::null_mut();
+        let mut dir_buf: *mut u8 = std::ptr::null_mut();
+        let mut dir_len: usize = 0;
         assert_eq!(
             unsafe {
-                rio_read_directory(store, cbase.as_ptr(), rel.as_ptr(), &mut dir_json, &mut err)
+                rio_read_directory(
+                    store,
+                    cbase.as_ptr(),
+                    rel.as_ptr(),
+                    &mut dir_buf,
+                    &mut dir_len,
+                    &mut err,
+                )
             },
             RIO_OK
         );
-        let dirents: BTreeMap<String, String> =
-            serde_json::from_str(&take_string(dir_json).expect("dir json"))?;
-        assert_eq!(dirents["bin"], "directory");
-        assert_eq!(dirents["data.txt"], "regular");
-        assert_eq!(dirents["link"], "symlink");
+        let buf = unsafe { std::slice::from_raw_parts(dir_buf, dir_len) };
+        let mut dirents: BTreeMap<String, u8> = BTreeMap::new();
+        let mut pos = 0usize;
+        let rd32 = |buf: &[u8], pos: &mut usize| {
+            let v = u32::from_le_bytes(buf[*pos..*pos + 4].try_into().unwrap());
+            *pos += 4;
+            v
+        };
+        let count = rd32(buf, &mut pos);
+        for _ in 0..count {
+            let kind = buf[pos];
+            pos += 1;
+            let name_len = rd32(buf, &mut pos) as usize;
+            let name = String::from_utf8(buf[pos..pos + name_len].to_vec())?;
+            pos += name_len;
+            dirents.insert(name, kind);
+        }
+        assert_eq!(pos, dir_len, "buffer fully consumed");
+        unsafe { rio_bytes_free(dir_buf, dir_len) };
+        assert_eq!(dirents["bin"], RIO_NODE_DIRECTORY);
+        assert_eq!(dirents["data.txt"], RIO_NODE_REGULAR);
+        assert_eq!(dirents["link"], RIO_NODE_SYMLINK);
+
+        // lstat through FFI: flat out-struct, kind 0 = missing.
+        let mut st = RioStat {
+            kind: 99,
+            executable: 99,
+            size: 99,
+        };
+        let rel_file = CString::new("data.txt")?;
+        assert_eq!(
+            unsafe { rio_lstat(store, cbase.as_ptr(), rel_file.as_ptr(), &mut st, &mut err) },
+            RIO_OK
+        );
+        assert_eq!(st.kind, RIO_NODE_REGULAR);
+        assert_eq!(st.executable, 0);
+        assert_eq!(st.size, b"payload\n".len() as u64);
+        let rel_missing = CString::new("no-such-entry")?;
+        assert_eq!(
+            unsafe {
+                rio_lstat(
+                    store,
+                    cbase.as_ptr(),
+                    rel_missing.as_ptr(),
+                    &mut st,
+                    &mut err,
+                )
+            },
+            RIO_OK
+        );
+        assert_eq!(st.kind, RIO_NODE_MISSING);
 
         // NAR regeneration through FFI is byte-identical.
         let mut regen: Vec<u8> = Vec::new();
@@ -1169,11 +1421,20 @@ mod ffi_smoke {
     /// and reads file bytes back from the origin.
     #[test]
     fn add_source_tree_through_ffi() -> anyhow::Result<()> {
+        use std::os::unix::ffi::OsStrExt;
         let dir = tempfile::tempdir()?;
         let cas = CString::new(dir.path().join("cas").to_str().unwrap())?;
         let tree = dir.path().join("tree");
         std::fs::create_dir_all(&tree)?;
         std::fs::write(tree.join("data.txt"), b"tree payload\n")?;
+        // Non-UTF-8 entry name: only local-tree ingest can produce one
+        // (the NAR dump path goes through rio-nix's UTF-8 NarNode), and
+        // the flat readDirectory buffer must hand it back byte-exact.
+        let weird_name: &[u8] = b"w\xff\xfeird";
+        std::fs::write(
+            tree.join(std::ffi::OsStr::from_bytes(weird_name)),
+            b"bytes\n",
+        )?;
 
         let mut store: *mut EvalStore = std::ptr::null_mut();
         let mut err: *mut c_char = std::ptr::null_mut();
@@ -1205,9 +1466,30 @@ mod ffi_smoke {
             serde_json::from_str(&take_string(out_json).expect("result json"))?;
         let path = result["path"].as_str().unwrap().to_string();
 
-        // Independent recomputation from rio-nix's own dump.
+        // Independent recomputation from rio-nix's own dump. The fs
+        // dumper requires UTF-8 names, so hash the canonical token
+        // stream assembled by hand for this two-entry tree instead.
         let mut dump = Vec::new();
-        nar::dump_path_streaming(&tree, &mut dump)?;
+        {
+            use rio_nix::nar::frame;
+            let w = &mut dump;
+            frame::magic(w)?;
+            frame::node_open(w)?;
+            frame::directory_open(w)?;
+            for (name, contents) in [
+                (&b"data.txt"[..], &b"tree payload\n"[..]),
+                (weird_name, &b"bytes\n"[..]),
+            ] {
+                frame::entry_open(w, name)?;
+                frame::node_open(w)?;
+                frame::regular_header(w, false, contents.len() as u64)?;
+                w.extend_from_slice(contents);
+                frame::contents_padding(w, contents.len() as u64)?;
+                frame::node_close(w)?;
+                frame::entry_close(w)?;
+            }
+            frame::node_close(w)?;
+        }
         let h = NixHash::new(HashAlgo::SHA256, Sha256::digest(&dump).to_vec())?;
         assert_eq!(
             path,
@@ -1233,6 +1515,43 @@ mod ffi_smoke {
             RIO_OK
         );
         assert_eq!(content, b"tree payload\n");
+
+        // The non-UTF-8 name round-trips through the flat readDirectory
+        // buffer as raw bytes (no lossy mangling, no refusal).
+        let rel_root = CString::new("")?;
+        let mut dir_buf: *mut u8 = std::ptr::null_mut();
+        let mut dir_len: usize = 0;
+        assert_eq!(
+            unsafe {
+                rio_read_directory(
+                    store,
+                    cbase.as_ptr(),
+                    rel_root.as_ptr(),
+                    &mut dir_buf,
+                    &mut dir_len,
+                    &mut err,
+                )
+            },
+            RIO_OK,
+            "{:?}",
+            take_string(err)
+        );
+        let buf = unsafe { std::slice::from_raw_parts(dir_buf, dir_len) };
+        let mut names: Vec<Vec<u8>> = Vec::new();
+        let mut pos = 0usize;
+        let count = u32::from_le_bytes(buf[pos..pos + 4].try_into().unwrap());
+        pos += 4;
+        for _ in 0..count {
+            assert_eq!(buf[pos], RIO_NODE_REGULAR);
+            pos += 1;
+            let name_len = u32::from_le_bytes(buf[pos..pos + 4].try_into().unwrap()) as usize;
+            pos += 4;
+            names.push(buf[pos..pos + name_len].to_vec());
+            pos += name_len;
+        }
+        assert_eq!(pos, dir_len, "buffer fully consumed");
+        unsafe { rio_bytes_free(dir_buf, dir_len) };
+        assert_eq!(names, vec![b"data.txt".to_vec(), weird_name.to_vec()]);
 
         unsafe { rio_store_free(store) };
         Ok(())
