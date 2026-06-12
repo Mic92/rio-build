@@ -68,6 +68,7 @@
           ("Controller", "spec/components/controller.typ", ()),
           ("Dashboard", "spec/components/dashboard.typ", ()),
           ("CLI", "spec/components/cli.typ", ()),
+          ("Build Client", "spec/components/build-client.typ", ()),
         ),
       ),
     ),
