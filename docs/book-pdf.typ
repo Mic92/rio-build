@@ -30,7 +30,8 @@
 #let pdf-scope(c) = (
   c.path != none
     and (
-      c.path in ("intro.typ", "architecture.typ")
+      c.path
+        in ("intro.typ", "architecture.typ", "architecture-build-client.typ")
         or c.path.starts-with("spec/")
         or c.path.starts-with("ref/")
     )

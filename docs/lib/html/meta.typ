@@ -15,6 +15,7 @@
     none,
     (
       ("Setup", "guide/setup.typ", ()),
+      ("Building with rio build", "guide/rio-build.typ", ()),
       ("CI Integration", "guide/ci.typ", ()),
       ("Programmatic Access", "guide/programmatic.typ", ()),
     ),
@@ -24,6 +25,7 @@
     none,
     (
       ("System Architecture", "architecture.typ", ()),
+      ("Build Client Architecture", "architecture-build-client.typ", ()),
     ),
   ),
   (
