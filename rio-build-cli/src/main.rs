@@ -8,7 +8,8 @@
 //!
 //! Observability: tracing spans carry `component = "build-client"`;
 //! logs are JSON by default (`RIO_LOG_FORMAT=pretty` for humans) on
-//! stderr — stdout is the status-line surface. No Prometheus exporter:
+//! stderr. Stdout carries the final result paths only — every status
+//! and log line goes to stderr via the renderer. No Prometheus exporter:
 //! the observability spec defines server-side metric surfaces only,
 //! and a short-lived CLI has no scrape endpoint to register against.
 
@@ -21,7 +22,7 @@ use rio_build_cli::acks::ClusterAckTable;
 use rio_build_cli::config::{Config, ConfigOverlay};
 use rio_build_cli::coordinator::clients::Clients;
 use rio_build_cli::coordinator::{Coordinator, CoordinatorOpts, OutcomeState};
-use rio_build_cli::evalchan;
+use rio_build_cli::{evalchan, render};
 
 #[derive(Parser)]
 #[command(name = "rio", version, about = "rio native-protocol build client")]
@@ -69,15 +70,46 @@ struct BuildArgs {
     #[arg(long)]
     detach: bool,
 
-    /// Evaluate attrs from a plain Nix file instead of a flake (the
-    /// installables become attr paths into the file's top-level
-    /// attrset). Mostly for tests and fixtures.
-    #[arg(long, value_name = "PATH")]
-    eval_file: Option<PathBuf>,
+    /// Evaluate a plain Nix file (or a directory containing
+    /// default.nix) instead of a flake, nix-build style: installables
+    /// are attr paths into its top-level value; with no installables
+    /// the top-level value itself is the build root.
+    #[arg(short = 'f', long, value_name = "PATH")]
+    file: Option<PathBuf>,
+
+    /// Pass the Nix expression EXPR as argument NAME to the file's
+    /// top-level function (file mode only, like nix-build --arg).
+    #[arg(long, num_args = 2, value_names = ["NAME", "EXPR"], requires = "file")]
+    arg: Vec<String>,
+
+    /// Pass the string VALUE as argument NAME to the file's top-level
+    /// function (file mode only, like nix-build --argstr).
+    #[arg(long, num_args = 2, value_names = ["NAME", "VALUE"], requires = "file")]
+    argstr: Vec<String>,
+
+    /// Add an entry to the angle-bracket lookup path (`<nixpkgs>`),
+    /// taking precedence over NIX_PATH (file mode only).
+    #[arg(short = 'I', long = "include", value_name = "PATH", requires = "file")]
+    include: Vec<String>,
 
     /// Continue building independent derivations after a failure.
     #[arg(long)]
     keep_going: bool,
+
+    /// Renderer: auto picks tty when stderr+stdin are a tty and
+    /// TERM≠dumb, ci when GITHUB_ACTIONS is set, otherwise plain (one
+    /// line per state edge, for scripts).
+    #[arg(long, value_enum, default_value = "auto")]
+    render: render::RenderMode,
+
+    /// Don't wrap successful build logs in ::group:: folds (CI renderer).
+    #[arg(long)]
+    no_fold: bool,
+
+    /// Seconds a build may produce no output before its tail is dumped
+    /// and further output is streamed live (CI renderer). 0 disables.
+    #[arg(long, default_value = "300", value_name = "SECS")]
+    stall_timeout: u64,
 
     #[command(flatten)]
     overlay: ConfigOverlay,
@@ -91,6 +123,26 @@ fn main() -> anyhow::Result<()> {
         .build()?;
     match cli.command {
         Command::Build(args) => runtime.block_on(run_build(args)),
+    }
+}
+
+/// Mirror the coordinator's resolved tracing level into the env value
+/// the eval parent maps onto nix's own verbosity, so `RUST_LOG=debug`
+/// also surfaces nix fetch/eval detail. `None` means leave nix at its
+/// default: info matches it already, and OFF has no nix equivalent
+/// worth forcing.
+fn nix_verbosity_env(level: tracing::level_filters::LevelFilter) -> Option<&'static str> {
+    use tracing::level_filters::LevelFilter;
+    if level == LevelFilter::ERROR {
+        Some("error")
+    } else if level == LevelFilter::WARN {
+        Some("warn")
+    } else if level == LevelFilter::DEBUG {
+        Some("debug")
+    } else if level == LevelFilter::TRACE {
+        Some("trace")
+    } else {
+        None
     }
 }
 
@@ -115,8 +167,18 @@ async fn run_build(args: BuildArgs) -> anyhow::Result<()> {
     std::fs::create_dir_all(&cas_root)
         .with_context(|| format!("creating CAS root {}", cas_root.display()))?;
 
+    let render_opts = render::RenderOpts {
+        mode: args.render,
+        no_fold: args.no_fold,
+        stall_timeout: args.stall_timeout,
+    };
+    // High while a pager owns the terminal: Ctrl-C must reach the pager
+    // (exits less follow mode), not abort builds behind its back.
+    let pager_gate = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     if let Some(id) = &args.attach {
-        let outcome = rio_build_cli::coordinator::attach_build(&mut clients, id, 0, true).await?;
+        let (render, render_task) = render::spawn(render_opts, pager_gate);
+        let outcome = rio_build_cli::coordinator::attach_build(&mut clients, id, 0, render).await?;
+        let _ = render_task.await;
         return finish(
             vec![outcome],
             args.fetch || args.out_link.is_some(),
@@ -127,8 +189,10 @@ async fn run_build(args: BuildArgs) -> anyhow::Result<()> {
         .await;
     }
 
-    if args.installables.is_empty() {
-        bail!("nothing to build: pass at least one installable (or --attach/--cancel)");
+    // File mode with zero installables is nix-build's "build the
+    // file's top-level value" — eval_plan submits the empty attr path.
+    if args.installables.is_empty() && args.file.is_none() {
+        bail!("nothing to build: pass at least one installable, --file, or --attach/--cancel");
     }
     let Some(eval_parent) = &cfg.eval_parent else {
         bail!(
@@ -137,9 +201,28 @@ async fn run_build(args: BuildArgs) -> anyhow::Result<()> {
         );
     };
 
-    let (parent_args, attrs) = eval_plan(&args.installables, args.eval_file.as_deref(), &cas_root)?;
-    let (chan, mut child) = evalchan::spawn_eval_parent(eval_parent, &parent_args)
-        .with_context(|| format!("spawning eval parent {}", eval_parent.display()))?;
+    let file_opts = FileEvalOpts {
+        args: &args.arg,
+        argstrs: &args.argstr,
+        includes: &args.include,
+    };
+    let (parent_args, attrs) = eval_plan(
+        &args.installables,
+        args.file.as_deref(),
+        file_opts,
+        &cas_root,
+    )?;
+    // Under the TTY renderer, eval-parent stderr would land inside the
+    // ephemeral region and corrupt it; pipe it and forward through the
+    // renderer instead.
+    let pipe_stderr = !matches!(render_opts.mode, render::RenderMode::Plain);
+    // `current()` is the subscriber's global max-level hint, so a per-target
+    // directive (`RUST_LOG=info,h2=trace`) raises nix verbosity too — accepted
+    // coarseness for a debugging aid, not worth resolving per target.
+    let nix_verbosity = nix_verbosity_env(tracing::level_filters::LevelFilter::current());
+    let (chan, mut child) =
+        evalchan::spawn_eval_parent(eval_parent, &parent_args, pipe_stderr, nix_verbosity)
+            .with_context(|| format!("spawning eval parent {}", eval_parent.display()))?;
 
     let acks = std::sync::Arc::new(std::sync::Mutex::new(ClusterAckTable::open(
         &cas_root,
@@ -147,6 +230,17 @@ async fn run_build(args: BuildArgs) -> anyhow::Result<()> {
         std::time::Duration::from_secs(cfg.ack_ttl_secs),
     )));
 
+    let (render, render_task) = render::spawn(render_opts, pager_gate.clone());
+    if let Some(stderr) = child.stderr.take() {
+        let r = render.clone();
+        tokio::spawn(async move {
+            use tokio::io::{AsyncBufReadExt, BufReader};
+            let mut lines = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                r.note(line);
+            }
+        });
+    }
     let mut coordinator = Coordinator {
         clients: clients.clone(),
         acks,
@@ -160,6 +254,7 @@ async fn run_build(args: BuildArgs) -> anyhow::Result<()> {
             detach_on_interrupt: args.detach,
             ..CoordinatorOpts::default()
         },
+        render,
     };
 
     // The first SIGINT/SIGTERM cancels this invocation's builds (or
@@ -183,6 +278,9 @@ async fn run_build(args: BuildArgs) -> anyhow::Result<()> {
                 _ = int.recv() => {}
                 _ = term.recv() => {}
             }
+            if pager_gate.load(std::sync::atomic::Ordering::Relaxed) {
+                continue;
+            }
             if sig_tx.send(()).is_err() {
                 return;
             }
@@ -192,11 +290,16 @@ async fn run_build(args: BuildArgs) -> anyhow::Result<()> {
     let summary = coordinator.run(chan, attrs, sig_rx).await?;
     // Reap the eval parent (it exits on Shutdown/EOF).
     let _ = child.wait().await;
+    // Stop the renderer (drains the channel, clears any live region)
+    // before the result-path lines and the failure summaries below.
+    drop(coordinator);
+    let _ = render_task.await;
 
     if summary.detached {
         // Outcome lines were already printed by the detach path.
         return Ok(());
     }
+    // r[impl bc.render.stdout-results]
     let mut failed = false;
     for o in &summary.outcomes {
         match &o.state {
@@ -227,22 +330,53 @@ async fn run_build(args: BuildArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// nix-build-style evaluation flags forwarded to the eval parent in
+/// file mode (clap rejects them without `--file`).
+#[derive(Clone, Copy, Default)]
+struct FileEvalOpts<'a> {
+    /// `--arg NAME EXPR` pairs, flattened by clap (`num_args = 2`).
+    args: &'a [String],
+    /// `--argstr NAME VALUE` pairs, flattened by clap.
+    argstrs: &'a [String],
+    /// `-I` lookup-path entries.
+    includes: &'a [String],
+}
+
 /// Derive the eval-parent argv + the WorkItem attrs from the
-/// installables. File mode (`--eval-file`): installables are attr
-/// paths into the file's top-level attrset. Flake mode: every
+/// installables. File mode (`-f/--file`): installables are attr paths
+/// into the file's top-level value; none means the top-level value
+/// itself (the empty attr path, nix-build parity). Flake mode: every
 /// installable is `ref#fragment` (or a bare ref = default attr); all
 /// must share ONE flake ref — the eval parent locks one flake per
 /// invocation (ADR-024: lock flake + fetch inputs once, pre-fork).
 fn eval_plan(
     installables: &[String],
-    eval_file: Option<&std::path::Path>,
+    file: Option<&std::path::Path>,
+    file_opts: FileEvalOpts<'_>,
     cas_root: &std::path::Path,
 ) -> anyhow::Result<(Vec<String>, Vec<String>)> {
     let mut argv = vec!["--cas".to_string(), cas_root.display().to_string()];
-    if let Some(f) = eval_file {
+    if let Some(f) = file {
         argv.push("--file".into());
         argv.push(f.display().to_string());
-        return Ok((argv, installables.to_vec()));
+        for pair in file_opts.args.chunks(2) {
+            argv.push("--arg".into());
+            argv.extend(pair.iter().cloned());
+        }
+        for pair in file_opts.argstrs.chunks(2) {
+            argv.push("--argstr".into());
+            argv.extend(pair.iter().cloned());
+        }
+        for inc in file_opts.includes {
+            argv.push("-I".into());
+            argv.push(inc.clone());
+        }
+        let attrs = if installables.is_empty() {
+            vec![String::new()]
+        } else {
+            installables.to_vec()
+        };
+        return Ok((argv, attrs));
     }
     let mut flake_ref: Option<String> = None;
     let mut attrs = Vec::with_capacity(installables.len());
@@ -306,14 +440,32 @@ async fn finish(
 
 #[cfg(test)]
 mod tests {
-    use super::eval_plan;
+    use super::{Cli, FileEvalOpts, eval_plan, nix_verbosity_env};
+    use clap::Parser;
     use std::path::Path;
+    use tracing::level_filters::LevelFilter;
+
+    #[test]
+    fn nix_verbosity_env_maps_tracing_level() {
+        let cases = [
+            (LevelFilter::OFF, None),
+            (LevelFilter::ERROR, Some("error")),
+            (LevelFilter::WARN, Some("warn")),
+            (LevelFilter::INFO, None),
+            (LevelFilter::DEBUG, Some("debug")),
+            (LevelFilter::TRACE, Some("trace")),
+        ];
+        for (level, expected) in cases {
+            assert_eq!(nix_verbosity_env(level), expected, "level={level}");
+        }
+    }
 
     #[test]
     fn eval_plan_flake_mode_splits_fragments() {
         let (argv, attrs) = eval_plan(
             &[".#hello".into(), ".#world".into(), ".".into()],
             None,
+            FileEvalOpts::default(),
             Path::new("/cas"),
         )
         .unwrap();
@@ -323,8 +475,13 @@ mod tests {
 
     #[test]
     fn eval_plan_rejects_mixed_flake_refs() {
-        let err =
-            eval_plan(&["./a#x".into(), "./b#y".into()], None, Path::new("/cas")).unwrap_err();
+        let err = eval_plan(
+            &["./a#x".into(), "./b#y".into()],
+            None,
+            FileEvalOpts::default(),
+            Path::new("/cas"),
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("share one flake ref"));
     }
 
@@ -333,10 +490,74 @@ mod tests {
         let (argv, attrs) = eval_plan(
             &["pkgA".into(), "nested.pkgB".into()],
             Some(Path::new("/tmp/fixture.nix")),
+            FileEvalOpts::default(),
             Path::new("/cas"),
         )
         .unwrap();
         assert_eq!(argv, vec!["--cas", "/cas", "--file", "/tmp/fixture.nix"]);
         assert_eq!(attrs, vec!["pkgA", "nested.pkgB"]);
+    }
+
+    #[test]
+    fn eval_plan_file_mode_zero_installables_builds_top_level() {
+        let (argv, attrs) = eval_plan(
+            &[],
+            Some(Path::new("/tmp/default.nix")),
+            FileEvalOpts::default(),
+            Path::new("/cas"),
+        )
+        .unwrap();
+        assert_eq!(argv, vec!["--cas", "/cas", "--file", "/tmp/default.nix"]);
+        // The empty attr path is the file's top-level value.
+        assert_eq!(attrs, vec![String::new()]);
+    }
+
+    #[test]
+    fn eval_plan_file_mode_forwards_nix_build_flags() {
+        let arg = vec!["tagged".to_string(), "true".to_string()];
+        let argstr = vec!["name".to_string(), "custom".to_string()];
+        let include = vec!["probe=/tmp/probe".to_string()];
+        let (argv, _) = eval_plan(
+            &["pkgA".into()],
+            Some(Path::new("/tmp/fixture.nix")),
+            FileEvalOpts {
+                args: &arg,
+                argstrs: &argstr,
+                includes: &include,
+            },
+            Path::new("/cas"),
+        )
+        .unwrap();
+        assert_eq!(
+            argv,
+            vec![
+                "--cas",
+                "/cas",
+                "--file",
+                "/tmp/fixture.nix",
+                "--arg",
+                "tagged",
+                "true",
+                "--argstr",
+                "name",
+                "custom",
+                "-I",
+                "probe=/tmp/probe",
+            ]
+        );
+    }
+
+    #[test]
+    fn nix_build_flags_rejected_without_file() {
+        // --arg/--argstr/-I only make sense for the file's top-level
+        // function; in flake mode they must error, not be ignored.
+        for args in [
+            vec!["rio", "build", ".#hello", "--arg", "a", "1"],
+            vec!["rio", "build", ".#hello", "--argstr", "a", "v"],
+            vec!["rio", "build", ".#hello", "-I", "p=/tmp"],
+        ] {
+            assert!(Cli::try_parse_from(&args).is_err(), "accepted {args:?}");
+        }
+        assert!(Cli::try_parse_from(["rio", "build", "-f", "x.nix", "--argstr", "a", "v"]).is_ok());
     }
 }

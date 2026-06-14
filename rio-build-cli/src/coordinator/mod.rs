@@ -38,7 +38,7 @@ use tracing::{debug, info, instrument, warn};
 
 use crate::acks::ClusterAckTable;
 use crate::evalchan::EvalChannel;
-use crate::render;
+use crate::render::{RenderEvent, RenderHandle};
 use clients::Clients;
 use graph::{BuildGraph, Digest32, RootGate, SubmitOptions};
 use submit::SubmitMaterials;
@@ -61,8 +61,6 @@ pub struct CoordinatorOpts {
     /// `--detach`: an interrupt exits the client and leaves builds
     /// running cluster-side instead of cancelling them.
     pub detach_on_interrupt: bool,
-    /// Print status lines to stdout (off in tests).
-    pub print_status: bool,
 }
 
 impl Default for CoordinatorOpts {
@@ -76,7 +74,6 @@ impl Default for CoordinatorOpts {
             out_link: None,
             local_ifd: false,
             detach_on_interrupt: false,
-            print_status: true,
         }
     }
 }
@@ -163,6 +160,9 @@ pub struct Coordinator {
     pub acks: Arc<Mutex<ClusterAckTable>>,
     pub cas_root: PathBuf,
     pub opts: CoordinatorOpts,
+    /// The renderer task's send handle. Every `BuildEvent` from a watch
+    /// stream goes here; the renderer decides what to print.
+    pub render: RenderHandle,
 }
 
 /// Wait for the next interrupt signal. A dropped sender must NOT read
@@ -229,6 +229,9 @@ impl Coordinator {
 
         let mut graph = BuildGraph::default();
         let mut expected: HashSet<String> = attrs.iter().cloned().collect();
+        // Every attr ever sent as a WorkItem (user-typed or expansion
+        // child) — the dedup set for attrset expansions.
+        let mut requested: HashSet<String> = expected.clone();
         let mut eval_failures: Vec<BuildOutcome> = Vec::new();
         let mut outcomes: Vec<BuildOutcome> = Vec::new();
         let mut pending_uploads = 0usize;
@@ -323,6 +326,8 @@ impl Coordinator {
                             continue;
                         }
                         info!(drv = %drv_path, "IFD stall: building remotely");
+                        self.render
+                            .note(format!("IFD stall: building {drv_path} remotely"));
                         let digest: Digest32 =
                             node.drv_digest.as_slice().try_into().map_err(|_| {
                                 anyhow::anyhow!("IfdRequest drv_digest is not 32 bytes")
@@ -344,22 +349,89 @@ impl Coordinator {
                             &tx,
                         )?;
                     }
+                    worker_frame::Msg::Expansion(exp) => {
+                        // The attrset installable becomes one root per
+                        // derivation child, named by its full attr
+                        // path; children spread across the worker pool
+                        // like explicitly listed attrs. A child already
+                        // requested (explicitly or by another
+                        // expansion) is not queued twice.
+                        // r[impl bc.eval.attrset-expansion]
+                        expected.remove(&exp.attr);
+                        for skipped in &exp.skipped {
+                            warn!(
+                                attr = %skipped,
+                                "skipping attrset entry: neither a derivation nor a recursable \
+                                 attrset"
+                            );
+                            self.render.note(format!(
+                                "skipping {skipped}: neither a derivation nor a recursable attrset"
+                            ));
+                        }
+                        if exp.children.is_empty() {
+                            // The worker normally errors instead of
+                            // sending an empty expansion; never let the
+                            // attr vanish silently.
+                            eval_failures.push(BuildOutcome {
+                                attr: exp.attr,
+                                build_id: String::new(),
+                                state: OutcomeState::EvalFailed {
+                                    message: "attrset installable expanded to zero derivations"
+                                        .into(),
+                                },
+                                drv_events: vec![],
+                                fetched: vec![],
+                            });
+                            continue;
+                        }
+                        info!(
+                            attr = %exp.attr,
+                            children = exp.children.len(),
+                            "attrset installable expanded"
+                        );
+                        self.render.note(format!(
+                            "{}: expanded to {} derivations",
+                            exp.attr,
+                            exp.children.len()
+                        ));
+                        for child in exp.children {
+                            if !requested.insert(child.clone()) {
+                                continue;
+                            }
+                            expected.insert(child.clone());
+                            writer
+                                .send(coordinator_frame::Msg::Work(WorkItem { attr: child }))
+                                .await
+                                .context("sending WorkItem")?;
+                        }
+                    }
                     worker_frame::Msg::Recycle(n) => {
                         debug!(generation = n.generation, "eval worker recycled");
+                    }
+                    worker_frame::Msg::Note(n) => {
+                        // Pre-fork warmup progress (libnix fetch
+                        // activity) — visibility only.
+                        self.render.note(n.text);
                     }
                     worker_frame::Msg::Error(e) => {
                         if e.fatal {
                             bail!("eval parent failed: {}", e.message);
                         }
-                        if e.attr.is_empty() {
-                            // Non-attr fault (e.g. a worker crash whose
-                            // attr was re-queued): visibility only, no
-                            // attr is lost.
+                        // The empty attr is a real WorkItem in zero-installable
+                        // file mode (the file's top-level value), so an Error
+                        // naming it while it is still expected is that attr's
+                        // eval failure — otherwise the build would wait on it
+                        // forever. Only an empty attr that was never requested
+                        // is a non-attr fault (e.g. a worker crash whose attr
+                        // was re-queued): visibility only, no attr is lost.
+                        if e.attr.is_empty() && !expected.contains("") {
                             warn!(error = %e.message, "eval parent reported a non-attr fault");
                             continue;
                         }
                         expected.remove(&e.attr);
                         warn!(attr = %e.attr, error = %e.message, "attr failed to evaluate");
+                        self.render
+                            .note(format!("{}: evaluation failed: {}", e.attr, e.message));
                         eval_failures.push(BuildOutcome {
                             attr: e.attr,
                             build_id: String::new(),
@@ -532,7 +604,9 @@ impl Coordinator {
                 // Builds keep running; tell the user how to come back.
                 detached = true;
                 for (attr, id) in &pending {
-                    eprintln!("detached: {attr} continues as build {id} — rio build --attach {id}");
+                    self.render.note(format!(
+                        "detached: {attr} continues as build {id} — rio build --attach {id}"
+                    ));
                     outcomes.push(BuildOutcome {
                         attr: attr.clone(),
                         build_id: id.clone(),
@@ -554,15 +628,15 @@ impl Coordinator {
                             biased;
                             _ = next_interrupt(&mut interrupt) => aborted = true,
                             res = cancel_build(&mut self.clients, id) => {
-                                match res {
-                                    Ok(true) => eprintln!("interrupted: cancelled {attr} (build {id})"),
+                                self.render.note(match res {
+                                    Ok(true) => format!("interrupted: cancelled {attr} (build {id})"),
                                     Ok(false) => {
-                                        eprintln!("interrupted: {attr} (build {id}) already terminal")
+                                        format!("interrupted: {attr} (build {id}) already terminal")
                                     }
-                                    Err(e) => eprintln!(
+                                    Err(e) => format!(
                                         "interrupted: cancelling {attr} (build {id}) failed: {e:#}"
                                     ),
-                                }
+                                });
                                 outcomes.push(BuildOutcome {
                                     attr: attr.clone(),
                                     build_id: id.clone(),
@@ -576,10 +650,10 @@ impl Coordinator {
                         }
                     }
                     if aborted {
-                        eprintln!(
+                        self.render.note(format!(
                             "interrupted again: {attr} may still be running as build {id} — \
                              rio build --attach {id} (or --cancel {id})"
-                        );
+                        ));
                         outcomes.push(BuildOutcome {
                             attr: attr.clone(),
                             build_id: id.clone(),
@@ -699,7 +773,7 @@ impl Coordinator {
         };
         let mut clients = self.clients.clone();
         let acks = Arc::clone(&self.acks);
-        let print_status = self.opts.print_status;
+        let render = self.render.clone();
         tokio::spawn(async move {
             let result = async {
                 let stream = submit::submit_root(&mut clients, &acks, &mats).await?;
@@ -707,7 +781,7 @@ impl Coordinator {
                     root_idx: idx,
                     digests,
                 });
-                watch_stream(&mut clients, stream, idx, &tx, print_status).await
+                watch_stream(&mut clients, stream, idx, &tx, render).await
             }
             .await;
             let _ = tx.send(Internal::Finished {
@@ -727,7 +801,7 @@ async fn watch_stream(
     mut stream: tonic::Streaming<BuildEvent>,
     root_idx: usize,
     tx: &mpsc::UnboundedSender<Internal>,
-    print_status: bool,
+    render: RenderHandle,
 ) -> anyhow::Result<WatchResult> {
     let mut result = WatchResult {
         build_id: String::new(),
@@ -766,9 +840,7 @@ async fn watch_stream(
                 build_id: ev.build_id.clone(),
             });
         }
-        if print_status && let Some(line) = render::line(&ev) {
-            println!("{line}");
-        }
+        render.send(RenderEvent::Build(ev.clone()));
         match ev.event {
             Some(Event::Derivation(d)) => {
                 result.drv_events.push((d.derivation_path, d.kind));
@@ -807,7 +879,7 @@ fn terminal(state: &OutcomeState) -> bool {
 pub async fn attach_build(
     clients: &mut Clients,
     build_id: &str,
-    print_status: bool,
+    render: RenderHandle,
 ) -> anyhow::Result<BuildOutcome> {
     let resp = clients
         .scheduler
@@ -817,7 +889,7 @@ pub async fn attach_build(
         .await
         .context("WatchBuild")?;
     let (tx, _rx) = mpsc::unbounded_channel();
-    let mut result = watch_stream(clients, resp.into_inner(), 0, &tx, print_status).await?;
+    let mut result = watch_stream(clients, resp.into_inner(), 0, &tx, render).await?;
     if result.build_id.is_empty() {
         result.build_id = build_id.to_string();
     }

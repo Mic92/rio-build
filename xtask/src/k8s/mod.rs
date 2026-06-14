@@ -555,11 +555,8 @@ pub async fn run(args: K8sArgs, cfg: &XtaskConfig) -> Result<()> {
         } => {
             with_cli_tunnel(&*p, sched_port, store_port, |sh| {
                 // Prefer an installed rio-cli (nix run / cargo install);
-                // fall back to cargo run for dev iteration. The PATH probe
-                // uses `command -v` via xshell — it's available in any
-                // POSIX sh and cheaper than pulling the `which` crate.
-                let on_path = sh::read(sh::cmd!(sh, "command -v rio-cli")).is_ok();
-                if on_path {
+                // fall back to cargo run for dev iteration.
+                if on_path(sh, "rio-cli") {
                     sh::run_interactive(sh::cmd!(sh, "rio-cli {args...}"))
                 } else {
                     sh::run_interactive(sh::cmd!(sh, "cargo run -q -p rio-cli -- {args...}"))
@@ -913,6 +910,17 @@ where
     f(&sh)
 }
 
+/// PATH probe for the tunnel commands' "installed binary vs nix run /
+/// cargo run" fallback. xshell execs the program directly (no shell),
+/// so a bare `cmd!(sh, "command -v {bin}")` looks up a `command`
+/// EXECUTABLE — which doesn't exist; `command` is a shell builtin —
+/// and the probe always falls through. Route through `sh -c` so the
+/// builtin actually runs.
+fn on_path(sh: &xshell::Shell, bin: &str) -> bool {
+    let probe = format!("command -v {bin}");
+    sh::read(sh::cmd!(sh, "sh -c {probe}")).is_ok()
+}
+
 // TODO: dev-cluster interim. Minting the tenant JWT here requires reading
 // the gateway's signing Secret, i.e. cluster-admin access. The production
 // path for native clients is a gateway token-issue endpoint plus external
@@ -979,26 +987,50 @@ async fn with_build_tunnel(
     };
     let token = rio_auth::jwt::sign(&claims, &signing_key)?;
 
-    let sh = sh::shell()?;
-    let _e1 = sh.push_env("RIO_SCHEDULER_ADDR", format!("localhost:{sched}"));
-    let _e2 = sh.push_env("RIO_STORE_ADDR", format!("localhost:{store}"));
     let token_fd = shared::bytes_to_memfd(token.as_bytes())?;
-    let _e3 = sh.push_env(
-        "RIO_TENANT_TOKEN_PATH",
-        format!("/dev/fd/{}", token_fd.as_raw_fd()),
-    );
     // RIO_CAS_ROOT stays unset: the client already defaults to
     // $XDG_CACHE_HOME/rio/evalstore.
 
     // `rio build` needs the eval parent (RIO_EVAL_PARENT), which only
     // the nix-built pair wires up — so unlike CliTunnel there is no
     // `cargo run` fallback; use `nix run .#rio` instead.
-    let on_path = sh::read(sh::cmd!(sh, "command -v rio")).is_ok();
-    if on_path {
-        sh::run_interactive(sh::cmd!(sh, "rio build {args...}"))
+    let sh = sh::shell()?;
+    // Raw Command (sh.rs policy): xshell nulls the child's stdin, but
+    // the rio build renderer only enables its TTY mode (colors, log
+    // browser keys) when both stderr AND stdin are terminals — the
+    // child must inherit the parent's real terminal.
+    let mut cmd = if on_path(&sh, "rio") {
+        let mut c = std::process::Command::new("rio");
+        c.arg("build");
+        c
     } else {
-        sh::run_interactive(sh::cmd!(sh, "nix run .#rio -- build {args...}"))
+        let mut c = std::process::Command::new("nix");
+        c.args(["run", ".#rio", "--", "build"]);
+        c
+    };
+    cmd.args(args);
+    let argv = std::iter::once(cmd.get_program())
+        .chain(cmd.get_args())
+        .map(|a| a.to_str().unwrap_or("?"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    debug!("exec (interactive): {argv}");
+    let status = cmd
+        .current_dir(sh::repo_root())
+        .env("RIO_SCHEDULER_ADDR", format!("localhost:{sched}"))
+        .env("RIO_STORE_ADDR", format!("localhost:{store}"))
+        // token_fd stays open until the child exits; bytes_to_memfd
+        // leaves FD_CLOEXEC unset so /dev/fd/N survives the exec.
+        .env(
+            "RIO_TENANT_TOKEN_PATH",
+            format!("/dev/fd/{}", token_fd.as_raw_fd()),
+        )
+        .status()
+        .with_context(|| format!("failed to spawn: {argv}"))?;
+    if !status.success() {
+        bail!("{argv}: {status}");
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1007,6 +1039,16 @@ mod tests {
 
     fn opts() -> UpOpts {
         UpOpts::default()
+    }
+
+    #[test]
+    fn on_path_detects_via_shell_builtin() {
+        // Regression: a bare `cmd!(sh, "command -v {bin}")` execs the
+        // word `command` directly — ENOENT — and the probe always
+        // reported absent. `sh` is on PATH in any POSIX environment.
+        let sh = sh::shell().unwrap();
+        assert!(on_path(&sh, "sh"));
+        assert!(!on_path(&sh, "rio-definitely-not-a-binary"));
     }
 
     #[test]

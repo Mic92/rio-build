@@ -28,6 +28,33 @@ A `ResultFrame` batch whose `root_drv_digest` is non-empty closes its attr:
 the attr's transitive skeleton is complete once every digest reachable from
 that root has been folded.
 
+= Installables
+
+An installable that names a single derivation becomes one build root. An
+installable that names an attribute set (`.#checks`,
+`.#checks.x86_64-linux`) is expanded instead of rejected.
+
+#r("bc.eval.attrset-expansion")[
+  An installable whose attr resolves to an attribute set rather than a
+  derivation MUST be expanded: the eval worker reports the full attr paths
+  of the set's derivation children (descending first into the entry named
+  after the eval system when present, and into nested sets only when they
+  carry `recurseForDerivations = true`), the coordinator queues each child
+  as its own build root named by that attr path, a child that is neither a
+  derivation nor a recursable attribute set is skipped with a warning
+  naming it, and an installable that expands to zero derivations fails
+  evaluation for that attr.
+]
+
+The expansion rides an `AttrsetExpansion` worker frame and is the attr's
+final answer: the children come back to the eval parent as ordinary
+`WorkItem`s, so they spread across the fork-worker pool exactly like
+explicitly listed attrs --- per-child crash-requeue, recycling and IFD all
+apply unchanged. A child that was also requested explicitly (or by another
+expansion) is queued once. A child whose name cannot be written as a
+re-resolvable attr path (it contains `"`, is all digits, or is empty) is
+skipped the same way as a non-derivation entry.
+
 = Pipeline
 
 The five ADR-024 stages run overlapped --- nothing waits for "eval finished":
@@ -89,6 +116,46 @@ Drv bodies are retained until the root's submission is *accepted* (not
 merely until upload-ack, as the ADR's coordinator sketch suggests): stale-ack
 recovery must re-upload from memory, and drvs are memory-only client-side ---
 a body dropped at ack time would force a full re-eval to recover.
+
+= Rendering
+
+#r("bc.render.stdout-results")[
+  Stdout MUST carry only the final result lines (`attr: built /nix/store/...`,
+  `fetched to ...`, `cancelled <id>`); every status, log and diagnostic line
+  goes to stderr.
+]
+
+This is the machine-readable surface --- a piped invocation gets clean
+result paths and nothing else.
+
+#r("bc.render.select")[
+  The `--render` mode `auto` MUST pick `tty` when stderr and stdin are
+  both ttys and `TERM` is set and not `dumb`; otherwise `ci` when
+  `GITHUB_ACTIONS=true`; otherwise `plain`.
+]
+
+#r("bc.render.plain-default")[
+  The `plain` renderer MUST keep the one-line-per-state-edge format
+  (`[<id8>] <state> <drv>`) on stderr.
+]
+
+The format is a compatibility surface for scripts and the VM test.
+
+#r("bc.render.sanitize")[
+  Every emitted build-derived string (log lines, phase, error message,
+  diagnostic notes) MUST be sanitized (SGR-only ANSI, no other control
+  characters, length-capped) and MUST be prefixed so no line can start
+  with `::`.
+]
+
+The prefix neutralises Actions `::endgroup::` / `::add-mask::`
+injection from build output; the sanitizer guarantees no CR/LF survives
+to fabricate a fresh line start.
+
+#r("bc.render.tty-restore")[
+  Terminal attributes (termios, cursor visibility) MUST be restored on
+  every exit path, including panic and SIGINT.
+]
 
 = Attach, detach, results
 

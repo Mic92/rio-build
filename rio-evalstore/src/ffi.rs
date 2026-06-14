@@ -512,6 +512,58 @@ pub unsafe extern "C" fn rio_add_source_tree(
     })
 }
 
+/// Ingest a filtered local source tree (`addToStore(SourcePath)` on a
+/// `FilteringSourceAccessor` over a physical store): same two-plane
+/// pipeline as [`rio_add_source_tree`], but the tree shape comes from a
+/// manifest the shim walked through the accessor (so it honours the
+/// tracked-files view) while regular files are read in parallel from
+/// their physical paths. `manifest` encoding: see `rio_evalstore.h`.
+/// `fs_path` / `refs_json` / `*out_json` as in [`rio_add_source_tree`].
+///
+/// # Safety
+/// Standard contract; `manifest` valid for `manifest_len` bytes;
+/// `path_cb` valid for the duration of the call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rio_add_filtered_tree(
+    store: *mut EvalStore,
+    fs_path: *const c_char,
+    name: *const c_char,
+    refs_json: *const c_char,
+    manifest: *const u8,
+    manifest_len: usize,
+    path_cb: RioPathCb,
+    path_ctx: *mut c_void,
+    out_json: *mut *mut c_char,
+    err: *mut *mut c_char,
+) -> c_int {
+    guard(err, || {
+        // SAFETY: caller contract.
+        let fs_path = unsafe { req_str(fs_path) }?;
+        // SAFETY: caller contract.
+        let name = unsafe { req_str(name) }?;
+        // SAFETY: caller contract.
+        let refs = parse_refs_json(unsafe { req_str(refs_json) }?)?;
+        // SAFETY: caller contract.
+        let manifest = crate::ingest::parse_manifest(unsafe { byte_slice(manifest, manifest_len) })
+            .map_err(|e| {
+                EvalStoreError::Unsupported(format!("malformed accessor manifest: {e}"))
+            })?;
+        let result =
+            store_ref(store).add_filtered_tree(fs_path, name, &refs, &manifest, &mut |h| {
+                call_path_cb(path_cb, path_ctx, h)
+            })?;
+        set_out_string(
+            out_json,
+            Some(
+                serde_json::to_string(&result).map_err(|e| {
+                    EvalStoreError::Corrupt(format!("add result encode failed: {e}"))
+                })?,
+            ),
+        );
+        Ok(())
+    })
+}
+
 /// Capture a derivation. `name` is the store-path name (`foo-1.2.drv`),
 /// `aterm` the canonical bytes nix hashed, `nix_drv_path` nix's computed
 /// path (cross-checked). On success `*out_path` is the (identical) drv
@@ -756,6 +808,29 @@ pub unsafe extern "C" fn rio_fingerprint_lookup(
     })
 }
 
+/// Upgrade `store_path`'s origin record to `Local{fs_path}`: the
+/// `path:` flake input scheme calls `addToStoreFromDump` directly, so
+/// the eval parent records the actual local origin post-`lockFlake`
+/// for SourceRoot emission. See [`EvalStore::mark_local_origin`].
+///
+/// # Safety
+/// Standard contract.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rio_mark_local_origin(
+    store: *mut EvalStore,
+    store_path: *const c_char,
+    fs_path: *const c_char,
+    err: *mut *mut c_char,
+) -> c_int {
+    guard(err, || {
+        // SAFETY: caller contract.
+        let store_path = unsafe { req_str(store_path) }?;
+        // SAFETY: caller contract.
+        let fs_path = unsafe { req_str(fs_path) }?;
+        store_ref(store).mark_local_origin(store_path, fs_path)
+    })
+}
+
 // ---------------------------------------------------------------------------
 // eval-parent surface (ADR-024)
 // ---------------------------------------------------------------------------
@@ -872,6 +947,90 @@ pub unsafe extern "C" fn rio_emit_result(
         frame.attr = attr.to_string();
         let msg = rio_proto::evaljob::WorkerFrame {
             msg: Some(rio_proto::evaljob::worker_frame::Msg::Result(frame)),
+        };
+        crate::evaljob::framing::write_frame(&mut crate::evaljob::framing::FdIo(fd), &msg)
+            .map_err(EvalStoreError::Io)
+    })
+}
+
+/// Emit a free-form `Note` frame on `fd` (the coordinator channel
+/// during the eval parent's pre-fork warmup): one-line progress text
+/// — libnix fetch-activity start lines — that the coordinator
+/// surfaces verbatim via the renderer's Note path.
+///
+/// # Safety
+/// Standard contract; `text` is a NUL-terminated UTF-8 string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rio_emit_note(
+    fd: c_int,
+    text: *const c_char,
+    err: *mut *mut c_char,
+) -> c_int {
+    guard(err, || {
+        // SAFETY: caller contract.
+        let text = unsafe { req_str(text) }?.to_string();
+        let msg = rio_proto::evaljob::WorkerFrame {
+            msg: Some(rio_proto::evaljob::worker_frame::Msg::Note(
+                rio_proto::evaljob::Note { text },
+            )),
+        };
+        crate::evaljob::framing::write_frame(&mut crate::evaljob::framing::FdIo(fd), &msg)
+            .map_err(EvalStoreError::Io)
+    })
+}
+
+/// Send an `AttrsetExpansion` frame for `attr` on `fd`: the attr
+/// resolved to an attrset rather than a derivation, and `children` are
+/// the full attr paths of its derivation children (the coordinator
+/// queues each as its own WorkItem). `skipped` names children that are
+/// neither derivations nor recursable attrsets — surfaced as warnings.
+///
+/// # Safety
+/// Standard contract; `children`/`skipped` must point at `n_children`/
+/// `n_skipped` valid NUL-terminated strings (null pointers allowed when
+/// the count is 0).
+// r[impl bc.eval.attrset-expansion]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rio_emit_expansion(
+    fd: c_int,
+    attr: *const c_char,
+    children: *const *const c_char,
+    n_children: usize,
+    skipped: *const *const c_char,
+    n_skipped: usize,
+    err: *mut *mut c_char,
+) -> c_int {
+    /// # Safety
+    /// `p` must point at `n` valid NUL-terminated strings when `n > 0`.
+    unsafe fn str_vec(
+        p: *const *const c_char,
+        n: usize,
+        what: &str,
+    ) -> Result<Vec<String>, EvalStoreError> {
+        let mut out = Vec::with_capacity(n);
+        for i in 0..n {
+            // SAFETY: caller contract.
+            let s = unsafe { req_str(*p.add(i)) }
+                .map_err(|e| EvalStoreError::Unsupported(format!("{what}[{i}]: {e}")))?;
+            out.push(s.to_string());
+        }
+        Ok(out)
+    }
+    guard(err, || {
+        // SAFETY: caller contract.
+        let attr = unsafe { req_str(attr) }?;
+        // SAFETY: caller contract.
+        let children = unsafe { str_vec(children, n_children, "children") }?;
+        // SAFETY: caller contract.
+        let skipped = unsafe { str_vec(skipped, n_skipped, "skipped") }?;
+        let msg = rio_proto::evaljob::WorkerFrame {
+            msg: Some(rio_proto::evaljob::worker_frame::Msg::Expansion(
+                rio_proto::evaljob::AttrsetExpansion {
+                    attr: attr.to_string(),
+                    children,
+                    skipped,
+                },
+            )),
         };
         crate::evaljob::framing::write_frame(&mut crate::evaljob::framing::FdIo(fd), &msg)
             .map_err(EvalStoreError::Io)

@@ -197,12 +197,9 @@ impl TestCluster {
 
     /// A coordinator wired to this cluster: ack table under the
     /// cluster's CAS root (persists across coordinators — that's the
-    /// warm path), status printing off.
+    /// warm path), null renderer.
     pub fn coordinator(&self, tweak: impl FnOnce(&mut CoordinatorOpts)) -> Coordinator {
-        let mut opts = CoordinatorOpts {
-            print_status: false,
-            ..CoordinatorOpts::default()
-        };
+        let mut opts = CoordinatorOpts::default();
         tweak(&mut opts);
         Coordinator {
             clients: self.clients.clone(),
@@ -213,6 +210,7 @@ impl TestCluster {
             ))),
             cas_root: self.cas.path().to_path_buf(),
             opts,
+            render: rio_build_cli::render::RenderHandle::null(),
         }
     }
 
@@ -224,8 +222,21 @@ impl TestCluster {
         script: HashMap<String, Vec<ResultFrame>>,
         attrs: &[&str],
     ) -> anyhow::Result<(RunSummary, StubParent)> {
+        self.run_expanding(coordinator, script, HashMap::new(), attrs)
+            .await
+    }
+
+    /// Like [`TestCluster::run`], but attrs in `expansions` answer with
+    /// an `AttrsetExpansion` frame (the `.#checks`-style installable).
+    pub async fn run_expanding(
+        &self,
+        coordinator: &mut Coordinator,
+        script: HashMap<String, Vec<ResultFrame>>,
+        expansions: HashMap<String, rio_proto::evaljob::AttrsetExpansion>,
+        attrs: &[&str],
+    ) -> anyhow::Result<(RunSummary, StubParent)> {
         let (ours, theirs) = std::os::unix::net::UnixStream::pair()?;
-        let parent = stub_parent::spawn(theirs, script);
+        let parent = stub_parent::spawn_expanding(theirs, script, expansions);
         let chan = EvalChannel::from_std(ours)?;
         // Keep the sender alive for the whole run: dropping it must
         // not read as an interrupt.

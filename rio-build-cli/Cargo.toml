@@ -31,10 +31,13 @@ base64 = { workspace = true }
 blake3 = { workspace = true }
 bytes = { workspace = true }
 clap = { workspace = true }
+console = { workspace = true }
 hex = { workspace = true }
 libc = { workspace = true }
 prost = { workspace = true }
+regex = { workspace = true }
 schemars = { workspace = true }
+tempfile = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
@@ -55,4 +58,3 @@ rio-auth = { workspace = true }
 rio-test-support = { workspace = true }
 ed25519-dalek = { workspace = true }
 sqlx = { workspace = true }
-tempfile = { workspace = true }

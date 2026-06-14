@@ -136,6 +136,31 @@ int rio_add_source_tree(
     char ** out_json,
     char ** err);
 
+/* addToStore(SourcePath) on a FilteringSourceAccessor over a physical
+ * store (git workdir flake `self`): same two-plane ingest as
+ * rio_add_source_tree, but the tree shape comes from a manifest the
+ * shim walked through the accessor — so the tracked-files view is
+ * honoured — while regular files are read in parallel from their
+ * physical paths. fs_path is getPhysicalPath() on the accessor's root.
+ *
+ * Manifest encoding (recursive, native-endian, NAR sorted order):
+ *   node := u8 kind (RIO_NODE_*), then
+ *     REGULAR:   u8 executable, u64 size, u32 plen, path bytes
+ *     SYMLINK:   u32 tlen, target bytes
+ *     DIRECTORY: u32 count, then per entry: u32 nlen, name bytes, node
+ * refs_json / *out_json as in rio_add_source_tree. */
+int rio_add_filtered_tree(
+    RioEvalStore * store,
+    const char * fs_path,
+    const char * name,
+    const char * refs_json,
+    const unsigned char * manifest,
+    size_t manifest_len,
+    rio_path_cb path_cb,
+    void * path_ctx,
+    char ** out_json,
+    char ** err);
+
 /* writeDerivation. name = store-path name ("foo-1.2.drv"); aterm = the
  * canonical bytes nix hashed; drv_json = nix's derivation JSON;
  * nix_drv_path = nix's computed path (hard cross-check). */
@@ -203,6 +228,13 @@ int rio_fingerprint_record(
     const char * store_path,
     char ** err);
 
+/* Upgrade store_path's origin record to Local{fs_path}: the path:
+ * flake input scheme calls addToStoreFromDump directly (no origin
+ * path on the dump), so the eval parent records the actual local
+ * origin post-lockFlake for SourceRoot emission. */
+int rio_mark_local_origin(
+    RioEvalStore * store, const char * store_path, const char * fs_path, char ** err);
+
 /* ── eval-parent surface (ADR-024 P3b) ─────────────────────────────────
  * Used only by the rio-eval binary (never the plugin). */
 
@@ -232,6 +264,25 @@ int rio_eval_parent_run(
  * /nix/store/....drv path) on the worker channel fd. */
 int rio_emit_result(
     RioEvalStore * store, int fd, const char * attr, const char * root_drv_path, char ** err);
+
+/* Send an AttrsetExpansion frame for `attr` on the worker channel fd:
+ * the attr resolved to an attrset rather than a derivation. children =
+ * full attr paths of its derivation children (one later WorkItem each);
+ * skipped = children that are neither derivations nor recursable
+ * attrsets (warnings). Null pointers are allowed when a count is 0. */
+int rio_emit_expansion(
+    int fd,
+    const char * attr,
+    const char * const * children,
+    size_t n_children,
+    const char * const * skipped,
+    size_t n_skipped,
+    char ** err);
+
+/* Send a free-form Note frame on `fd` (the coordinator channel during
+ * the eval parent's pre-fork warmup): one-line progress text the
+ * coordinator surfaces verbatim. */
+int rio_emit_note(int fd, const char * text, char ** err);
 
 /* Relay an import-from-derivation to the coordinator and BLOCK until
  * it resolves. On success the outputs are imported into this worker's

@@ -35,11 +35,25 @@ struct Args {
     #[arg(long)]
     cas: PathBuf,
     /// Fixture nix file (passed through as --file).
+    #[arg(long, conflicts_with = "flake", required_unless_present = "flake")]
+    file: Option<PathBuf>,
+    /// Fixture flake ref (passed through as --flake).
     #[arg(long)]
-    file: PathBuf,
-    /// Comma-separated attrs to evaluate.
+    flake: Option<String>,
+    /// Comma-separated attrs to evaluate. Empty in file mode means the
+    /// file's top-level value (the empty attr path), like the
+    /// coordinator's zero-installable default.
     #[arg(long, value_delimiter = ',')]
     attrs: Vec<String>,
+    /// `--arg NAME EXPR` pair forwarded to the eval parent (file mode).
+    #[arg(long, num_args = 2, value_names = ["NAME", "EXPR"])]
+    arg: Vec<String>,
+    /// `--argstr NAME VALUE` pair forwarded to the eval parent (file mode).
+    #[arg(long, num_args = 2, value_names = ["NAME", "VALUE"])]
+    argstr: Vec<String>,
+    /// `-I` lookup-path entry forwarded to the eval parent (file mode).
+    #[arg(short = 'I', long)]
+    include: Vec<String>,
     /// Pass --recycle-attrs to the eval parent.
     #[arg(long)]
     recycle_attrs: Option<u32>,
@@ -70,19 +84,42 @@ struct Summary {
     eval_errors: Vec<(String, String)>,
     /// Attr-less faults (crash visibility reports).
     faults: Vec<String>,
+    /// Attrset expansions: (attr, child attr paths).
+    expansions: Vec<(String, Vec<String>)>,
+    /// Children skipped by expansions (not derivations, not recursable).
+    skipped: Vec<String>,
+    /// Pre-fork warmup progress notes (libnix fetch-activity start
+    /// lines forwarded as `Note` frames).
+    notes: Vec<String>,
     recycles: usize,
     total_nodes: usize,
 }
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
-    let args = Args::parse();
-    let mut parent_args = vec![
-        "--cas".to_string(),
-        args.cas.display().to_string(),
-        "--file".to_string(),
-        args.file.display().to_string(),
-    ];
+    let mut args = Args::parse();
+    // Mirror the coordinator's nix-build default: in file mode, no
+    // attrs means the file's top-level value (the empty attr path).
+    if args.attrs.is_empty() && args.file.is_some() {
+        args.attrs = vec![String::new()];
+    }
+    let mut parent_args = vec!["--cas".to_string(), args.cas.display().to_string()];
+    match (&args.file, &args.flake) {
+        (Some(f), None) => parent_args.extend(["--file".into(), f.display().to_string()]),
+        (None, Some(r)) => parent_args.extend(["--flake".into(), r.clone()]),
+        _ => unreachable!("clap enforces exactly one of --file/--flake"),
+    }
+    for pair in args.arg.chunks(2) {
+        parent_args.push("--arg".into());
+        parent_args.extend(pair.iter().cloned());
+    }
+    for pair in args.argstr.chunks(2) {
+        parent_args.push("--argstr".into());
+        parent_args.extend(pair.iter().cloned());
+    }
+    for inc in &args.include {
+        parent_args.extend(["-I".into(), inc.clone()]);
+    }
     if let Some(n) = args.recycle_attrs {
         parent_args.extend(["--recycle-attrs".into(), n.to_string()]);
     }
@@ -90,8 +127,9 @@ async fn main() -> anyhow::Result<()> {
         parent_args.extend(["--workers".into(), n.to_string()]);
     }
 
-    let (chan, mut child) = evalchan::spawn_eval_parent(&args.eval_parent, &parent_args)
-        .context("spawning eval parent")?;
+    let (chan, mut child) =
+        evalchan::spawn_eval_parent(&args.eval_parent, &parent_args, false, None)
+            .context("spawning eval parent")?;
     let evalchan::EvalChannel {
         mut reader,
         mut writer,
@@ -118,6 +156,9 @@ async fn main() -> anyhow::Result<()> {
         results: vec![],
         eval_errors: vec![],
         faults: vec![],
+        expansions: vec![],
+        skipped: vec![],
+        notes: vec![],
         recycles: 0,
         total_nodes: 0,
     };
@@ -198,12 +239,32 @@ async fn main() -> anyhow::Result<()> {
                     ))
                     .await?;
             }
+            worker_frame::Msg::Expansion(exp) => {
+                // Mirror the coordinator: the attrset attr resolves into
+                // one WorkItem per derivation child.
+                pending.remove(&exp.attr);
+                summary.skipped.extend(exp.skipped);
+                for child in &exp.children {
+                    if pending.insert(child.clone()) {
+                        writer
+                            .send(coordinator_frame::Msg::Work(WorkItem {
+                                attr: child.clone(),
+                            }))
+                            .await?;
+                    }
+                }
+                summary.expansions.push((exp.attr, exp.children));
+            }
             worker_frame::Msg::Recycle(_) => summary.recycles += 1,
+            worker_frame::Msg::Note(n) => summary.notes.push(n.text),
             worker_frame::Msg::Error(e) => {
                 if e.fatal {
                     bail!("eval parent fatal: {}", e.message);
                 }
-                if e.attr.is_empty() {
+                // Mirror the coordinator: the empty attr is a real WorkItem
+                // (zero-attr file mode), so an Error naming it while pending
+                // is its eval failure, not an attr-less fault.
+                if e.attr.is_empty() && !pending.contains("") {
                     summary.faults.push(e.message);
                 } else {
                     pending.remove(&e.attr);

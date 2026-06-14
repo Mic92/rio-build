@@ -303,6 +303,17 @@ fn handle_worker_frame(
                     .push(pid);
             }
         }
+        Some(worker_frame::Msg::Expansion(ref e)) => {
+            // The attr's answer is its child list; the children come
+            // back as ordinary WorkItems, so this worker is idle again.
+            // r[impl bc.eval.attrset-expansion]
+            let w = &mut workers[idx];
+            if w.current.as_deref() == Some(e.attr.as_str()) {
+                w.current = None;
+                w.attrs_done += 1;
+                maybe_recycle(chan, w, generation, opts)?;
+            }
+        }
         Some(worker_frame::Msg::Error(ref e)) => {
             let w = &mut workers[idx];
             if w.current.as_deref() == Some(e.attr.as_str()) {
@@ -579,5 +590,12 @@ fn run_worker_loop(store: &EvalStore, stream: UnixStream, eval: &mut EvalFn<'_>)
     // exit IS the eval-state GC (boehmgc never collects under
     // GC_DONT_GC), so this flush is the only teardown that matters.
     let _ = store.flush();
+    // The exit(0) below skips Drop (and so the EvalStore::drop stats
+    // dump). Per-worker ingest counters are the ONLY observability
+    // hook for ADR-024 ingest perf — the parent's store sees only
+    // pre-fork warmup ops — so dump them here explicitly.
+    if crate::stats::Stats::enabled() {
+        eprintln!("{}", store.stats().render());
+    }
     std::process::exit(0);
 }

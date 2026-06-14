@@ -14025,6 +14025,7 @@
         "client",
         "config",
         "derive",
+        "http-proxy",
         "kube-client",
         "kube-derive",
         "kube-runtime",
@@ -14174,6 +14175,7 @@
         "futures",
         "http-body",
         "http-body-util",
+        "http-proxy",
         "hyper",
         "hyper-rustls",
         "hyper-timeout",
@@ -19705,6 +19707,10 @@
           "packageId": "clap"
         },
         {
+          "name": "console",
+          "packageId": "console"
+        },
+        {
           "name": "hex",
           "packageId": "hex"
         },
@@ -19715,6 +19721,10 @@
         {
           "name": "prost",
           "packageId": "prost"
+        },
+        {
+          "name": "regex",
+          "packageId": "regex"
         },
         {
           "name": "rio-common",
@@ -19751,6 +19761,10 @@
         {
           "name": "sha2",
           "packageId": "sha2 0.11.0"
+        },
+        {
+          "name": "tempfile",
+          "packageId": "tempfile"
         },
         {
           "name": "thiserror",
@@ -19801,10 +19815,6 @@
         {
           "name": "sqlx",
           "packageId": "sqlx"
-        },
-        {
-          "name": "tempfile",
-          "packageId": "tempfile"
         }
       ],
       "crateBin": [
@@ -30086,6 +30096,10 @@
           "packageId": "cipher"
         },
         {
+          "name": "console",
+          "packageId": "console"
+        },
+        {
           "name": "crossbeam-epoch",
           "packageId": "crossbeam-epoch"
         },
@@ -30235,22 +30249,16 @@
           "packageId": "hyper-util"
         },
         {
-          "name": "hyper-util",
-          "packageId": "hyper-util",
-          "target": "aarch64-unknown-linux-gnu"
-        },
-        {
-          "name": "hyper-util",
-          "packageId": "hyper-util",
-          "target": "x86_64-unknown-linux-gnu"
-        },
-        {
           "name": "indexmap",
           "packageId": "indexmap 2.14.0"
         },
         {
           "name": "inout",
           "packageId": "inout 0.2.2"
+        },
+        {
+          "name": "ipnet",
+          "packageId": "ipnet"
         },
         {
           "name": "jiff",
@@ -30677,6 +30685,10 @@
           "packageId": "cipher"
         },
         {
+          "name": "console",
+          "packageId": "console"
+        },
+        {
           "name": "crossbeam-epoch",
           "packageId": "crossbeam-epoch"
         },
@@ -30826,22 +30838,16 @@
           "packageId": "hyper-util"
         },
         {
-          "name": "hyper-util",
-          "packageId": "hyper-util",
-          "target": "aarch64-unknown-linux-gnu"
-        },
-        {
-          "name": "hyper-util",
-          "packageId": "hyper-util",
-          "target": "x86_64-unknown-linux-gnu"
-        },
-        {
           "name": "indexmap",
           "packageId": "indexmap 2.14.0"
         },
         {
           "name": "inout",
           "packageId": "inout 0.2.2"
+        },
+        {
+          "name": "ipnet",
+          "packageId": "ipnet"
         },
         {
           "name": "jiff",

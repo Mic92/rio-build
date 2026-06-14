@@ -40,7 +40,7 @@ use rio_packstore::{Digest, Kind, Options, PackStore};
 use crate::dirblob::{BuiltDir, BuiltEntry, DirBlobError};
 use crate::dircache::{DecodedDir, DirStore, DirStoreError, EntryRef};
 use crate::fingerprint::{FingerprintRecord, FingerprintTable, stat_fingerprint, tree_stat_walk};
-use crate::ingest::{self, IngestConfig, IngestError, IngestFile, IngestNode};
+use crate::ingest::{self, IngestConfig, IngestError, IngestFile, IngestNode, IngestResult};
 use crate::stats::Stats;
 
 /// Pack-record kind for per-path metadata records ([`PathMeta`] JSON).
@@ -611,6 +611,59 @@ impl EvalStore {
             )
         });
         let result = ingest::ingest_tree(std::path::Path::new(fs_path), &IngestConfig::default())?;
+        let out =
+            self.commit_local_ingest(fs_path, name, references, &refs, result, nix_path_for)?;
+        self.stats.record("add_source_tree", out.nar_size);
+        Ok(out)
+    }
+
+    /// Ingest a filtered local source tree (`addToStore(SourcePath)` on a
+    /// `FilteringSourceAccessor` over a physical store — git workdir flake
+    /// `self`): same single-read two-plane pipeline as
+    /// [`EvalStore::add_source_tree`], but the tree shape is the
+    /// accessor's tracked-files view, supplied as a pre-walked
+    /// [`ingest::ManifestNode`]. Regular files are read in parallel from
+    /// their physical paths; the NAR sha256 is computed over the filtered
+    /// shape, so the resulting store path equals what `dumpPath` through
+    /// the accessor would produce. `fs_path` is the physical root
+    /// (`getPhysicalPath` on the accessor's root) — every visible file
+    /// lives at `fs_path/<rel>` for the same `<rel>` the directory blobs
+    /// record, so `Origin::Local` readback applies unchanged.
+    pub fn add_filtered_tree(
+        &self,
+        fs_path: &str,
+        name: &str,
+        references: &[String],
+        manifest: &ingest::ManifestNode,
+        nix_path_for: &mut dyn FnMut(&AddHashes) -> Result<String>,
+    ) -> Result<AddResult> {
+        let refs = parse_refs(references)?;
+        // r[impl bc.evalparent.claim-advisory]
+        let _claim = self.claims.get().map(|t| {
+            crate::evaljob::claim::ClaimGuard::acquire(
+                t,
+                *blake3::hash(fs_path.as_bytes()).as_bytes(),
+            )
+        });
+        let result = ingest::ingest_manifest(manifest, &IngestConfig::default())?;
+        let out =
+            self.commit_local_ingest(fs_path, name, references, &refs, result, nix_path_for)?;
+        self.stats.record("add_filtered_tree", out.nar_size);
+        Ok(out)
+    }
+
+    /// Shared back half of the local-tree ingest routes: NAR-recursive
+    /// store-path computation + nix cross-check, ingest-tree → directory
+    /// blobs + chunk-meta records, commit as [`Origin::Local`].
+    fn commit_local_ingest(
+        &self,
+        fs_path: &str,
+        name: &str,
+        references: &[String],
+        refs: &[StorePath],
+        result: IngestResult,
+        nix_path_for: &mut dyn FnMut(&AddHashes) -> Result<String>,
+    ) -> Result<AddResult> {
         let nar_sha256 = result.nar_sha256;
         let nar_size = result.nar_size;
 
@@ -618,7 +671,7 @@ impl EvalStore {
             name,
             &NixHash::new(HashAlgo::SHA256, nar_sha256.to_vec())?,
             true,
-            &refs,
+            refs,
         )?;
         let hashes = AddHashes {
             nar_sha256: hex::encode(nar_sha256),
@@ -667,7 +720,6 @@ impl EvalStore {
             },
             extra_pins,
         )?;
-        self.stats.record("add_source_tree", nar_size);
 
         Ok(AddResult {
             path: rust_path.to_string(),
@@ -1555,6 +1607,42 @@ impl EvalStore {
             .iter()
             .map(|o| o.path().to_string())
             .collect())
+    }
+
+    /// Upgrade a Streamed-origin path's record to `Local{fs_path}` in
+    /// the in-memory meta cache. The `path:` flake input scheme calls
+    /// `addToStoreFromDump` directly (libfetchers `path.cc`) — the dump
+    /// is a NAR stream with no origin path, so the ingest records
+    /// `Origin::Streamed` and `source_root_for` then skips it,
+    /// leaving the flake's `self` un-uploadable. The eval parent calls
+    /// this post-`lockFlake` with the path it parsed the flakeref from,
+    /// and forked workers COW-inherit the upgraded cache entry.
+    ///
+    /// Cache-only: the persisted record is left Streamed. `path:`
+    /// flakes re-dump on every `lockFlake` regardless, so a warm-CAS
+    /// run reaches this same point and re-upgrades; no readback path
+    /// depends on the persisted origin between runs.
+    pub fn mark_local_origin(&self, full_store_path: &str, fs_path: &str) -> Result<()> {
+        let Some(basename) = store_path::basename(full_store_path) else {
+            return Ok(());
+        };
+        let mut inner = self.lock();
+        let Some(meta) = self.path_meta(&mut inner, basename)? else {
+            return Ok(());
+        };
+        if matches!(meta.origin, Origin::Local { .. }) {
+            return Ok(());
+        }
+        inner.metas.insert(
+            basename.to_string(),
+            std::sync::Arc::new(PathMeta {
+                origin: Origin::Local {
+                    fs_path: fs_path.to_string(),
+                },
+                ..(*meta).clone()
+            }),
+        );
+        Ok(())
     }
 
     /// `SourceRoot` for one inputSrc, or `None` when the path is not
