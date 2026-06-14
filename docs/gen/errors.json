@@ -470,6 +470,251 @@
       "doc": "K8s API error (connection, permission, not-found)."
     },
     {
+      "enum": "DirBlobError",
+      "name": "Invalid",
+      "crate": "rio-evalstore",
+      "msg": "invalid directory body: {0}",
+      "doc": "A directory body failed structural validation (bad name, duplicate, oversized entry, …). Hard error: an invalid body must never be encoded, digested, or persisted."
+    },
+    {
+      "enum": "DirBlobError",
+      "name": "TooDeep",
+      "crate": "rio-evalstore",
+      "msg": "directory nesting depth {0} exceeds maximum {MAX_NAR_DEPTH}",
+      "doc": "Nesting deeper than the NAR reader's [`MAX_NAR_DEPTH`]. The same bound for the same reason: a deeper tree can never be regenerated as a NAR the reader accepts, so committing it would create an unservable path. It also keeps the fold recursion bounded — stack depth is capped regardless of caller-supplied input."
+    },
+    {
+      "enum": "DirStoreError",
+      "name": "Build",
+      "crate": "rio-evalstore",
+      "msg": "(transparent — delegates to inner error)",
+      "doc": ""
+    },
+    {
+      "enum": "DirStoreError",
+      "name": "Decode",
+      "crate": "rio-evalstore",
+      "msg": "directory {digest} is not a valid Directory message: {source}",
+      "doc": ""
+    },
+    {
+      "enum": "DirStoreError",
+      "name": "DigestMismatch",
+      "crate": "rio-evalstore",
+      "msg": "directory blob is not canonical: requested {requested}, re-encode digests to {recomputed}",
+      "doc": ""
+    },
+    {
+      "enum": "DirStoreError",
+      "name": "Invalid",
+      "crate": "rio-evalstore",
+      "msg": "directory {digest} failed structural validation: {source}",
+      "doc": ""
+    },
+    {
+      "enum": "DirStoreError",
+      "name": "NotFound",
+      "crate": "rio-evalstore",
+      "msg": "directory {0} not in the pack store",
+      "doc": ""
+    },
+    {
+      "enum": "DirStoreError",
+      "name": "Pack",
+      "crate": "rio-evalstore",
+      "msg": "(transparent — delegates to inner error)",
+      "doc": ""
+    },
+    {
+      "enum": "EvalStoreError",
+      "name": "AtermRoundTrip",
+      "crate": "rio-evalstore",
+      "msg": "ATerm round-trip FAILED for derivation '{name}': rio-nix unparse(parse(aterm)) differs from nix's original bytes — refusing to continue (parser/serializer divergence)",
+      "doc": ""
+    },
+    {
+      "enum": "EvalStoreError",
+      "name": "Corrupt",
+      "crate": "rio-evalstore",
+      "msg": "client CAS is corrupt: {0}",
+      "doc": ""
+    },
+    {
+      "enum": "EvalStoreError",
+      "name": "Derivation",
+      "crate": "rio-evalstore",
+      "msg": "derivation error: {0}",
+      "doc": ""
+    },
+    {
+      "enum": "EvalStoreError",
+      "name": "Dir",
+      "crate": "rio-evalstore",
+      "msg": "directory store error: {0}",
+      "doc": ""
+    },
+    {
+      "enum": "EvalStoreError",
+      "name": "DirBlob",
+      "crate": "rio-evalstore",
+      "msg": "directory blob error: {0}",
+      "doc": ""
+    },
+    {
+      "enum": "EvalStoreError",
+      "name": "ForeignPath",
+      "crate": "rio-evalstore",
+      "msg": "path '{0}' is not in the client CAS — cluster-backed reads for foreign paths arrive in ADR-024 M1; M0 serves only paths this store ingested",
+      "doc": ""
+    },
+    {
+      "enum": "EvalStoreError",
+      "name": "Hash",
+      "crate": "rio-evalstore",
+      "msg": "hash error: {0}",
+      "doc": ""
+    },
+    {
+      "enum": "EvalStoreError",
+      "name": "Ingest",
+      "crate": "rio-evalstore",
+      "msg": "source ingest failed: {0}",
+      "doc": ""
+    },
+    {
+      "enum": "EvalStoreError",
+      "name": "Io",
+      "crate": "rio-evalstore",
+      "msg": "I/O error: {0}",
+      "doc": ""
+    },
+    {
+      "enum": "EvalStoreError",
+      "name": "Nar",
+      "crate": "rio-evalstore",
+      "msg": "NAR error: {0}",
+      "doc": ""
+    },
+    {
+      "enum": "EvalStoreError",
+      "name": "NarHashMismatch",
+      "crate": "rio-evalstore",
+      "msg": "NAR hash cross-check FAILED for '{path}': computed sha256:{computed} but caller claimed sha256:{claimed}",
+      "doc": ""
+    },
+    {
+      "enum": "EvalStoreError",
+      "name": "NoSuchEntry",
+      "crate": "rio-evalstore",
+      "msg": "no such entry '{rel}' in store object '{basename}'",
+      "doc": ""
+    },
+    {
+      "enum": "EvalStoreError",
+      "name": "OriginChanged",
+      "crate": "rio-evalstore",
+      "msg": "origin file '{origin}' of store object '{basename}' changed since ingest (content no longer matches the recorded digest) — the tree must be re-ingested",
+      "doc": "TODO: ADR-024's at-most-twice escape hatch (re-ingest → re-negotiate the delta, snapshot into the CAS after two failed re-ingests) lands with the P3 upload path; P1 only detects and names the mutation."
+    },
+    {
+      "enum": "EvalStoreError",
+      "name": "OriginUnreadable",
+      "crate": "rio-evalstore",
+      "msg": "origin file '{origin}' of store object '{basename}' is unreadable: {source}",
+      "doc": ""
+    },
+    {
+      "enum": "EvalStoreError",
+      "name": "Pack",
+      "crate": "rio-evalstore",
+      "msg": "pack store error: {0}",
+      "doc": ""
+    },
+    {
+      "enum": "EvalStoreError",
+      "name": "PathMismatch",
+      "crate": "rio-evalstore",
+      "msg": "store path cross-check FAILED for {op} of '{name}': rio-nix computed {rust_path} but nix computed {nix_path} — refusing to continue (one of the two hashing implementations is wrong)",
+      "doc": ""
+    },
+    {
+      "enum": "EvalStoreError",
+      "name": "StorePath",
+      "crate": "rio-evalstore",
+      "msg": "store path error: {0}",
+      "doc": ""
+    },
+    {
+      "enum": "EvalStoreError",
+      "name": "Unsupported",
+      "crate": "rio-evalstore",
+      "msg": "unsupported in rio-evalstore M0: {0}",
+      "doc": ""
+    },
+    {
+      "enum": "EvalStoreError",
+      "name": "Utf8",
+      "crate": "rio-evalstore",
+      "msg": "derivation is not valid UTF-8: {0}",
+      "doc": ""
+    },
+    {
+      "enum": "IngestError",
+      "name": "ReadDir",
+      "crate": "rio-evalstore",
+      "msg": "failed to read directory {path:?}",
+      "doc": "`readdir` of a directory failed."
+    },
+    {
+      "enum": "IngestError",
+      "name": "ReadFile",
+      "crate": "rio-evalstore",
+      "msg": "failed to read file {path:?}",
+      "doc": "`open`/`read` of a regular file failed."
+    },
+    {
+      "enum": "IngestError",
+      "name": "ReadLink",
+      "crate": "rio-evalstore",
+      "msg": "failed to read symlink target of {path:?}",
+      "doc": "`readlink` of a symlink failed."
+    },
+    {
+      "enum": "IngestError",
+      "name": "SizeChanged",
+      "crate": "rio-evalstore",
+      "msg": "file {path:?} changed size during ingest: stat said {expected}, read {actual} bytes",
+      "doc": "A file's content length changed between the discovery `lstat` and the read. The NAR length prefix is written from the stat size, so a mutating source tree would corrupt the archive — fail loud instead (same stance as rio-nix's dump truncation check)."
+    },
+    {
+      "enum": "IngestError",
+      "name": "Stat",
+      "crate": "rio-evalstore",
+      "msg": "failed to stat {path:?}",
+      "doc": "`lstat` of a tree entry failed."
+    },
+    {
+      "enum": "IngestError",
+      "name": "TooDeep",
+      "crate": "rio-evalstore",
+      "msg": "{path:?}: directory nesting depth {depth} exceeds {max}",
+      "doc": "Directory nesting exceeds [`rio_nix::nar::MAX_NAR_DEPTH`] — the same producer-side bound as rio-nix's dump (a NAR every consumer rejects must not be emitted), and what keeps the spine's recursion stack bounded."
+    },
+    {
+      "enum": "IngestError",
+      "name": "TooManyEntries",
+      "crate": "rio-evalstore",
+      "msg": "{path:?} has {count} entries, exceeding the maximum of {max}",
+      "doc": "A directory has at least [`rio_nix::nar::MAX_DIRECTORY_ENTRIES`] entries — the same producer-side bound as rio-nix's dump (a NAR every consumer rejects must not be emitted)."
+    },
+    {
+      "enum": "IngestError",
+      "name": "UnsupportedFileType",
+      "crate": "rio-evalstore",
+      "msg": "{path:?} has an unsupported file type (not regular/directory/symlink)",
+      "doc": "Entry is not a regular file, directory, or symlink (FIFO, socket, device node). NAR cannot represent it; matches nix `dumpPath`."
+    },
+    {
       "enum": "GatewayError",
       "name": "ClientReported",
       "crate": "rio-gateway",
@@ -1093,6 +1338,34 @@
       "doc": ""
     },
     {
+      "enum": "Error",
+      "name": "Corrupt",
+      "crate": "rio-packstore",
+      "msg": "corrupt pack store: {0}",
+      "doc": ""
+    },
+    {
+      "enum": "Error",
+      "name": "Io",
+      "crate": "rio-packstore",
+      "msg": "i/o: {0}",
+      "doc": ""
+    },
+    {
+      "enum": "Error",
+      "name": "ReservedKind",
+      "crate": "rio-packstore",
+      "msg": "kind {0:#04x} is reserved for store-internal records",
+      "doc": ""
+    },
+    {
+      "enum": "Error",
+      "name": "TooLarge",
+      "crate": "rio-packstore",
+      "msg": "record payload too large: {0} bytes (max 4 GiB)",
+      "doc": ""
+    },
+    {
       "enum": "DirectoryError",
       "name": "BadDigestLen",
       "crate": "rio-proto",
@@ -1196,13 +1469,6 @@
       "crate": "rio-scheduler",
       "msg": "backpressure: actor queue is overloaded",
       "doc": ""
-    },
-    {
-      "enum": "ActorError",
-      "name": "BatchSiblingFailed",
-      "crate": "rio-scheduler",
-      "msg": "co-batched submission failed; retrying independently",
-      "doc": "P2 batch-persist fan-out: this merge was an INNOCENT sibling in a coalesced phase-5 transaction that aborted because of ANOTHER merge's data (the culprit got the original typed error). Pre-P2 this merge would have been processed solo and succeeded; the only reason it failed is co-batching. Maps to UNAVAILABLE so the gateway's bounded SubmitBuild retry re-submits — the next batch won't include the culprit (whose own gateway saw a terminal error), so the innocent succeeds. The prior class-preserving fan-out delivered the CULPRIT'S Terminal class to siblings, terminally failing valid requests — a P2 regression vs the serial path. UNIT (no culprit detail): coalesced merges may belong to DIFFERENT TENANTS. Embedding the culprit's error string (which names their drv_path) in a sibling's wire error is a cross-tenant information leak. The culprit detail goes only to `replies[culprit]`; operator diagnosability is the `error!` in `flush_pending_merges`."
     },
     {
       "enum": "ActorError",
@@ -1804,6 +2070,26 @@
       "doc": "Top-level reconcile error. kube's `Controller::run` takes an `error_policy` fn that receives this and decides requeue timing. `Box` on the finalizer variant: `finalizer::Error<Self>` is recursive (it wraps our Error for ApplyFailed/CleanupFailed). Unboxed it's an infinite-size type. Box breaks the cycle with a pointer indirection."
     },
     {
+      "name": "DirBlobError",
+      "crate": "rio-evalstore",
+      "doc": ""
+    },
+    {
+      "name": "DirStoreError",
+      "crate": "rio-evalstore",
+      "doc": ""
+    },
+    {
+      "name": "EvalStoreError",
+      "crate": "rio-evalstore",
+      "doc": ""
+    },
+    {
+      "name": "IngestError",
+      "crate": "rio-evalstore",
+      "doc": "Ingest failures. Every variant names the path that failed; the first failure aborts the whole ingest (all threads join, partial results are discarded)."
+    },
+    {
       "name": "GatewayError",
       "crate": "rio-gateway",
       "doc": "Typed errors for the handler layer. Converts to `anyhow::Error` at the boundary via `thiserror`'s `std::error::Error` impl + anyhow's blanket `From<E: Error>`. The outer handler signature remains `anyhow::Result<()>` — use `.into()` or `?` to convert."
@@ -1851,6 +2137,11 @@
     {
       "name": "WireError",
       "crate": "rio-nix",
+      "doc": ""
+    },
+    {
+      "name": "Error",
+      "crate": "rio-packstore",
       "doc": ""
     },
     {
