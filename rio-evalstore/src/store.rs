@@ -326,7 +326,7 @@ pub(crate) struct Inner {
     /// (per-worker dedup — the coordinator dedups globally, this just
     /// avoids resending a shared closure on every attr of one worker).
     pub(crate) reported: HashSet<[u8; 32]>,
-    /// Source-root dir digests already shipped, same role.
+    /// Source-root keys ([`source_root_key`]) already shipped, same role.
     pub(crate) reported_sources: HashSet<[u8; 32]>,
     /// Decoded path-metadata cache (same role as the decoded-dir cache:
     /// a per-op JSON parse on the hot lstat path would re-create the
@@ -1488,13 +1488,12 @@ impl EvalStore {
     /// dedups globally anyway (`bc.fold.dedup-by-digest`), this keeps
     /// per-worker frames small.
     ///
-    /// `inputSrcs` that are not locally-ingested directory trees
-    /// (streamed `toFile` content, single-file roots) are skipped with
-    /// a stats count: the coordinator's source upload only handles
-    /// origin-backed directory roots today (see the TODO in
-    /// `rio-build-cli::coordinator::upload::plan_source_upload`); a
-    /// genuinely missing input surfaces at the cluster's submit-time
-    /// verify rather than silently.
+    /// Every `inputSrc` with a path-meta record is reported, whatever
+    /// its origin (local tree or streamed) and root kind (directory,
+    /// single file, symlink). Only foreign store paths this eval never
+    /// ingested are skipped, with a stats count — a genuinely missing
+    /// input surfaces at the cluster's submit-time verify rather than
+    /// silently.
     pub fn assemble_subgraph(
         &self,
         root_drv_path: &str,
@@ -1551,23 +1550,23 @@ impl EvalStore {
             }
             for src in input_srcs {
                 if let Some(sr) = self.source_root_for(&mut inner, &src)? {
-                    let d: [u8; 32] = sr
-                        .dir_digest
-                        .as_slice()
-                        .try_into()
-                        .expect("dir digests are 32 bytes");
-                    if inner.reported_sources.contains(&d)
-                        || frame
-                            .source_roots
-                            .iter()
-                            .any(|s| s.dir_digest == sr.dir_digest)
-                    {
+                    let key = source_root_key(&sr)
+                        .expect("source_root_for always populates the root node");
+                    if inner.reported_sources.contains(&key) || emitted_sources.contains(&key) {
                         continue;
                     }
-                    emitted_sources.push(d);
+                    emitted_sources.push(key);
                     frame.source_roots.push(sr);
                 }
             }
+        }
+        // Streamed roots have no origin tree: the coordinator serves
+        // their upload from this CAS through its OWN pack-store handle,
+        // which only sees records already published to the on-disk
+        // index. Flush this process's segment before the frame leaves
+        // so the records are visible the moment the coordinator acts.
+        if frame.source_roots.iter().any(|s| s.origin.is_empty()) {
+            inner.dirs.flush()?;
         }
         inner.reported.extend(emitted);
         inner.reported_sources.extend(emitted_sources);
@@ -1613,10 +1612,12 @@ impl EvalStore {
     /// the in-memory meta cache. The `path:` flake input scheme calls
     /// `addToStoreFromDump` directly (libfetchers `path.cc`) — the dump
     /// is a NAR stream with no origin path, so the ingest records
-    /// `Origin::Streamed` and `source_root_for` then skips it,
-    /// leaving the flake's `self` un-uploadable. The eval parent calls
-    /// this post-`lockFlake` with the path it parsed the flakeref from,
-    /// and forked workers COW-inherit the upgraded cache entry.
+    /// `Origin::Streamed` and the flake's `self` would upload through
+    /// the coordinator's CAS-read path. Recording the local origin
+    /// keeps `self` on the cheaper origin re-read (not-a-mirror rule).
+    /// The eval parent calls this post-`lockFlake` with the path it
+    /// parsed the flakeref from, and forked workers COW-inherit the
+    /// upgraded cache entry.
     ///
     /// Cache-only: the persisted record is left Streamed. `path:`
     /// flakes re-dump on every `lockFlake` regardless, so a warm-CAS
@@ -1645,8 +1646,10 @@ impl EvalStore {
         Ok(())
     }
 
-    /// `SourceRoot` for one inputSrc, or `None` when the path is not
-    /// an origin-backed directory tree (skipped, counted).
+    /// `SourceRoot` for one inputSrc, or `None` when the path has no
+    /// path-meta record in the client CAS (a foreign store path this
+    /// eval never ingested — skipped, counted; the cluster verify
+    /// names a genuinely missing one).
     fn source_root_for(
         &self,
         inner: &mut Inner,
@@ -1665,21 +1668,52 @@ impl EvalStore {
             }
             Err(e) => return Err(e),
         };
-        let (Origin::Local { fs_path }, MetaNode::Dir { digest }) = (&meta.origin, &meta.root)
-        else {
-            // Streamed content (toFile) or file/symlink roots: the
-            // origin-reread upload path can't serve these yet.
-            self.stats.record("source_root_skipped", 0);
-            return Ok(None);
+        // Streamed roots (fetched flake inputs, toFile text) have no
+        // origin tree on disk; an empty origin tells the coordinator
+        // to serve the upload from the client CAS instead of an
+        // origin re-read.
+        let origin = match &meta.origin {
+            Origin::Local { fs_path } => fs_path.clone(),
+            Origin::Streamed => String::new(),
+        };
+        let (dir_digest, root_node) = match &meta.root {
+            MetaNode::Dir { digest } => (
+                digest.to_vec(),
+                rio_proto::castore::root_node::Node::DirDigest(digest.to_vec()),
+            ),
+            MetaNode::File {
+                digest,
+                size,
+                executable,
+            } => (
+                Vec::new(),
+                rio_proto::castore::root_node::Node::File(rio_proto::castore::FileEntry {
+                    // A NAR root has no name.
+                    name: Vec::new(),
+                    digest: digest.to_vec(),
+                    size: *size,
+                    executable: *executable,
+                }),
+            ),
+            MetaNode::Symlink { target } => (
+                Vec::new(),
+                rio_proto::castore::root_node::Node::Symlink(rio_proto::castore::SymlinkEntry {
+                    name: Vec::new(),
+                    target: target.clone(),
+                }),
+            ),
         };
         let nar_hash = hex::decode(&meta.info.nar_hash)
             .map_err(|e| EvalStoreError::Corrupt(format!("bad stored nar_hash hex: {e}")))?;
         Ok(Some(rio_proto::evaljob::SourceRoot {
             store_path: full_path.to_string(),
-            dir_digest: digest.to_vec(),
+            dir_digest,
             nar_hash,
             nar_size: meta.info.nar_size,
-            origin: fs_path.clone(),
+            origin,
+            root_node: Some(rio_proto::castore::RootNode {
+                node: Some(root_node),
+            }),
         }))
     }
 
@@ -1719,6 +1753,48 @@ impl Drop for EvalStore {
         if Stats::enabled() {
             eprintln!("{}", self.stats.render());
         }
+    }
+}
+
+/// Stable dedup/ack key for one [`SourceRoot`](rio_proto::evaljob::SourceRoot).
+/// Shared between the eval-side per-worker dedup set and the
+/// coordinator's graph + cluster-ack keying — both sides must agree or
+/// a warm second run re-uploads.
+///
+/// Directory roots keep using the root Directory digest verbatim: it is
+/// already the cluster negotiation key (`HasDirectories`) and existing
+/// ack-table records are keyed by it. File and symlink roots have no
+/// Directory blob, so their key is a domain-separated blake3 over the
+/// store path plus the root identity (content digest + executable bit,
+/// or the symlink target). Including the store path keeps two distinct
+/// store paths with identical content from collapsing into one upload.
+///
+/// `None` = the message carries neither a usable `root_node` nor a
+/// 32-byte `dir_digest` (malformed frame; the coordinator rejects it).
+pub fn source_root_key(sr: &rio_proto::evaljob::SourceRoot) -> Option<[u8; 32]> {
+    use rio_proto::castore::root_node::Node;
+    match sr.root_node.as_ref().and_then(|r| r.node.as_ref()) {
+        Some(Node::File(f)) => {
+            let mut h = blake3::Hasher::new();
+            h.update(b"rio-src-file\0");
+            h.update(sr.store_path.as_bytes());
+            h.update(b"\0");
+            h.update(&f.digest);
+            h.update(&[u8::from(f.executable)]);
+            Some(*h.finalize().as_bytes())
+        }
+        Some(Node::Symlink(s)) => {
+            let mut h = blake3::Hasher::new();
+            h.update(b"rio-src-symlink\0");
+            h.update(sr.store_path.as_bytes());
+            h.update(b"\0");
+            h.update(&s.target);
+            Some(*h.finalize().as_bytes())
+        }
+        Some(Node::DirDigest(d)) => d.as_slice().try_into().ok(),
+        // Old workers omit root_node entirely; the only shape they ever
+        // sent is a directory root keyed by dir_digest.
+        None => sr.dir_digest.as_slice().try_into().ok(),
     }
 }
 

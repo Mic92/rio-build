@@ -17,7 +17,7 @@ use std::sync::atomic::Ordering;
 use common::{TestCluster, single_frame};
 use rio_build_cli::coordinator::OutcomeState;
 use rio_evalstore::dirblob::{BuiltDir, BuiltEntry};
-use rio_evalstore::ingest::{IngestConfig, IngestNode, ingest_tree};
+use rio_evalstore::ingest::{IngestConfig, IngestNode, chunk_bytes, ingest_tree};
 use rio_proto::evaljob::{ResultFrame, SourceRoot};
 
 type TestResult = anyhow::Result<()>;
@@ -54,6 +54,134 @@ fn source_root_for(origin: &Path, name: &str) -> SourceRoot {
         nar_hash: result.nar_sha256.to_vec(),
         nar_size: result.nar_size,
         origin: origin.to_str().expect("utf8 temp path").to_string(),
+        root_node: Some(rio_proto::castore::RootNode {
+            node: Some(rio_proto::castore::root_node::Node::DirDigest(
+                folded.root_digest.0.to_vec(),
+            )),
+        }),
+    }
+}
+
+/// Ingest a real single-file or symlink origin and report it the way an
+/// eval worker would: inline castore root node, empty `dir_digest`.
+fn leaf_source_root(origin: &Path, name: &str) -> SourceRoot {
+    use rio_proto::castore::{FileEntry, RootNode, SymlinkEntry, root_node::Node};
+    let result = ingest_tree(origin, &IngestConfig::default()).expect("ingest");
+    let node = match &result.root {
+        IngestNode::File(f) => Node::File(FileEntry {
+            name: vec![],
+            digest: f.digest.to_vec(),
+            size: f.size,
+            executable: f.executable,
+        }),
+        IngestNode::Symlink(s) => Node::Symlink(SymlinkEntry {
+            name: vec![],
+            target: s.target.clone(),
+        }),
+        IngestNode::Dir(_) => panic!("leaf fixture must not be a directory"),
+    };
+    SourceRoot {
+        store_path: drvgen::fake_out_path(name),
+        dir_digest: vec![],
+        nar_hash: result.nar_sha256.to_vec(),
+        nar_size: result.nar_size,
+        origin: origin.to_str().expect("utf8 temp path").to_string(),
+        root_node: Some(RootNode { node: Some(node) }),
+    }
+}
+
+/// Seed a streamed (no origin tree on disk) source into the cluster's
+/// client CAS via a NAR ingest — the shape a fetched flake input lands
+/// as — and report it with an empty origin so the coordinator must
+/// serve the upload from the CAS. Returns the SourceRoot.
+fn streamed_source_root(
+    cas_root: &Path,
+    name: &str,
+    nar_root: &rio_nix::nar::NarNode,
+) -> SourceRoot {
+    use rio_proto::castore::{FileEntry, RootNode, SymlinkEntry, root_node::Node};
+    use sha2::Digest as _;
+
+    let store = rio_evalstore::EvalStore::open(Some(cas_root.to_str().expect("utf8 cas root")))
+        .expect("open CAS");
+    let mut nar = Vec::new();
+    rio_nix::nar::serialize(&mut nar, nar_root).expect("serialize NAR");
+    let nar_hash: [u8; 32] = sha2::Sha256::digest(&nar).into();
+    let store_path = drvgen::fake_out_path(name);
+    store
+        .add_nar(
+            &rio_evalstore::store::ProvidedInfo {
+                path: store_path.clone(),
+                nar_hash: hex::encode(nar_hash),
+                nar_size: nar.len() as u64,
+                references: vec![],
+                ca: None,
+            },
+            &mut nar.as_slice(),
+        )
+        .expect("add_nar");
+    store.flush().expect("flush CAS");
+
+    // Castore identity for the same content, computed the way the eval
+    // store does (shared dirblob fold / blake3 keys).
+    fn build(node: &rio_nix::nar::NarNode) -> BuiltEntry {
+        match node {
+            rio_nix::nar::NarNode::Regular {
+                executable,
+                contents,
+            } => BuiltEntry::File {
+                digest: rio_packstore::Digest(*blake3::hash(contents).as_bytes()),
+                size: contents.len() as u64,
+                executable: *executable,
+            },
+            rio_nix::nar::NarNode::Symlink { target } => BuiltEntry::Symlink {
+                target: target.clone().into_bytes(),
+            },
+            rio_nix::nar::NarNode::Directory { entries } => {
+                let mut b = BuiltDir::new();
+                for e in entries {
+                    b.push(e.name.as_bytes(), build(&e.node));
+                }
+                BuiltEntry::Dir(b)
+            }
+        }
+    }
+    let (dir_digest, node) = match build(nar_root) {
+        BuiltEntry::Dir(dir) => {
+            let folded = dir.fold().expect("fold");
+            (
+                folded.root_digest.0.to_vec(),
+                Node::DirDigest(folded.root_digest.0.to_vec()),
+            )
+        }
+        BuiltEntry::File {
+            digest,
+            size,
+            executable,
+        } => (
+            vec![],
+            Node::File(FileEntry {
+                name: vec![],
+                digest: digest.0.to_vec(),
+                size,
+                executable,
+            }),
+        ),
+        BuiltEntry::Symlink { target } => (
+            vec![],
+            Node::Symlink(SymlinkEntry {
+                name: vec![],
+                target,
+            }),
+        ),
+    };
+    SourceRoot {
+        store_path,
+        dir_digest,
+        nar_hash: nar_hash.to_vec(),
+        nar_size: nar.len() as u64,
+        origin: String::new(),
+        root_node: Some(RootNode { node: Some(node) }),
     }
 }
 
@@ -62,6 +190,15 @@ fn write_source_tree(dir: &Path) {
     std::fs::write(dir.join("default.nix"), b"{ }: null\n").unwrap();
     std::fs::write(dir.join("src/main.c"), vec![0x42; 100_000]).unwrap();
     std::fs::write(dir.join("src/util.c"), b"static int x;\n").unwrap();
+}
+
+/// Count of committed narinfo rows for one store path.
+async fn narinfo_rows(cluster: &TestCluster, store_path: &str) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM narinfo WHERE store_path = $1")
+        .bind(store_path)
+        .fetch_one(&cluster.db.pool)
+        .await
+        .expect("narinfo count")
 }
 
 /// Cold submit end-to-end: a 3-node closure plus one real source tree
@@ -280,6 +417,112 @@ async fn stale_ack_second_reject_is_hard_error() -> TestResult {
     Ok(())
 }
 
+/// Chunk stale-ack recovery (the production GC-grace-vs-ack-TTL hole):
+/// a chunk the client's ack table remembers loses its S3 object while
+/// its presence row keeps claiming durable. A later upload that dedups
+/// against it is rejected UNAVAILABLE naming the digest; the client
+/// evicts the chunk ack, re-HasChunks-es (the store demoted the lying
+/// row, so the probe now answers absent), re-streams the chunk, and the
+/// retried upload — and the whole build — completes.
+// r[verify bc.upload.stale-ack-once]
+#[tokio::test]
+async fn stale_chunk_ack_recovery_reuploads_and_completes() -> TestResult {
+    // The chunk-backend fault injection goes through the trait surface.
+    use rio_store::backend::ChunkBackend as _;
+
+    let cluster = TestCluster::new().await?;
+
+    // Run 1: a source tree whose payload spans several FastCDC chunks.
+    let payload = rio_test_support::fixtures::pseudo_random_bytes(0xC4A5, 1 << 20);
+    let (_, payload_chunks) = chunk_bytes(&payload);
+    assert!(
+        payload_chunks.len() >= 2,
+        "fixture must span multiple chunks (got {})",
+        payload_chunks.len()
+    );
+    let dir1 = tempfile::tempdir()?;
+    std::fs::create_dir_all(dir1.path().join("src"))?;
+    std::fs::write(dir1.path().join("src/blob.bin"), &payload)?;
+    let src1 = source_root_for(dir1.path(), "chunkstale-src-v1");
+
+    let chain1 = drvgen::chain(&["chunkstale-leaf", "chunkstale-root"]);
+    let root1 = &chain1[1];
+    let script1 = HashMap::from([(
+        "a".to_string(),
+        vec![single_frame(
+            "a",
+            &[&chain1[0], root1],
+            vec![src1.clone()],
+            root1,
+        )],
+    )]);
+    let mut cold = cluster.coordinator(|_| {});
+    let (summary, _) = cluster.run(&mut cold, script1, &["a"]).await?;
+    assert!(matches!(
+        summary.outcomes[0].state,
+        OutcomeState::Completed { .. }
+    ));
+
+    // The hole: the first chunk's S3 object disappears while its
+    // `chunks` row keeps claiming durable presence and the client's ack
+    // table keeps remembering the ack.
+    let victim = payload_chunks[0].digest;
+    cluster
+        .backend
+        .delete_by_key(&cluster.backend.key_for(&victim))
+        .await?;
+
+    // Run 2: a tree whose payload shares the victim chunk (identical
+    // prefix, so FastCDC reproduces the same first cut) but ends in new
+    // content — its whole-file digest has no committed binding, so the
+    // store must fetch the victim back to verify it and discovers the
+    // miss.
+    let prefix_len = (payload_chunks[0].offset + u64::from(payload_chunks[0].len)) as usize;
+    let mut payload2 = payload[..prefix_len].to_vec();
+    payload2.extend(rio_test_support::fixtures::pseudo_random_bytes(
+        0xC4A6,
+        512 * 1024,
+    ));
+    let dir2 = tempfile::tempdir()?;
+    std::fs::create_dir_all(dir2.path().join("src"))?;
+    std::fs::write(dir2.path().join("src/blob.bin"), &payload2)?;
+    let src2 = source_root_for(dir2.path(), "chunkstale-src-v2");
+
+    let chain2 = drvgen::chain(&["chunkstale2-leaf", "chunkstale2-root"]);
+    let root2 = &chain2[1];
+    let script2 = HashMap::from([(
+        "b".to_string(),
+        vec![single_frame(
+            "b",
+            &[&chain2[0], root2],
+            vec![src2.clone()],
+            root2,
+        )],
+    )]);
+    let mut warm = cluster.coordinator(|_| {});
+    let (summary, _) = cluster.run(&mut warm, script2, &["b"]).await?;
+    assert!(
+        matches!(summary.outcomes[0].state, OutcomeState::Completed { .. }),
+        "chunk stale-ack recovery must converge: {:?}",
+        summary.outcomes[0].state
+    );
+
+    // Recovery re-streamed the victim chunk: the object is back in the
+    // backend, presence is honest again, and the v2 source committed.
+    assert!(
+        cluster.backend.exists_batch(&[victim]).await?[0],
+        "recovery must re-upload the missing chunk object"
+    );
+    let durable: bool =
+        sqlx::query_scalar("SELECT durable AND NOT deleted FROM chunks WHERE blake3_hash = $1")
+            .bind(victim.as_slice())
+            .fetch_one(&cluster.db.pool)
+            .await?;
+    assert!(durable, "the re-uploaded chunk answers HasChunks again");
+    assert_eq!(narinfo_rows(&cluster, &src2.store_path).await, 1);
+    Ok(())
+}
+
 /// Two attrs sharing a leaf: the second root's submission excludes the
 /// node the first already submitted this session (the scheduler
 /// resolves the cross-submission digest from the store).
@@ -465,7 +708,7 @@ async fn pagination_above_node_threshold() -> TestResult {
 /// A source tree mutated between eval and upload must fail the root
 /// loudly — the upload-time re-read recomputes the NAR hash and root
 /// digest and refuses to ship content the skeleton never referenced.
-// r[verify bc.upload.origin-reread]
+// r[verify bc.upload.origin-reread+2]
 #[tokio::test]
 async fn mutated_origin_fails_upload_loudly() -> TestResult {
     let cluster = TestCluster::new().await?;
@@ -487,6 +730,211 @@ async fn mutated_origin_fails_upload_loudly() -> TestResult {
     let msg = format!("{err:#}");
     assert!(
         msg.contains("changed since eval") || msg.contains("folds to root digest"),
+        "error must name the mutation: {msg}"
+    );
+    Ok(())
+}
+
+/// Single-file and symlink source roots upload via `PutPathChunked`
+/// with inline castore root nodes — no Directory DAG, no
+/// `HasDirectories` probe — and commit real narinfo rows.
+// r[verify bc.upload.source-root-kinds]
+#[tokio::test]
+async fn file_and_symlink_source_roots_upload() -> TestResult {
+    let cluster = TestCluster::new().await?;
+    let dir = tempfile::tempdir()?;
+    let patch = dir.path().join("fix.patch");
+    std::fs::write(&patch, b"--- a/x\n+++ b/x\n@@ patch body @@\n")?;
+    let link = dir.path().join("link");
+    std::os::unix::fs::symlink("fix.patch", &link)?;
+    let src_file = leaf_source_root(&patch, "fix-patch");
+    let src_link = leaf_source_root(&link, "fix-link");
+
+    let root = drvgen::make_drv("leafsrc-root", &[], &[]);
+    let script = HashMap::from([(
+        "a".to_string(),
+        vec![single_frame(
+            "a",
+            &[&root],
+            vec![src_file.clone(), src_link.clone()],
+            &root,
+        )],
+    )]);
+    let mut coordinator = cluster.coordinator(|_| {});
+    let (summary, _) = cluster.run(&mut coordinator, script, &["a"]).await?;
+    assert!(
+        matches!(summary.outcomes[0].state, OutcomeState::Completed { .. }),
+        "{:?}",
+        summary.outcomes[0].state
+    );
+    assert_eq!(narinfo_rows(&cluster, &src_file.store_path).await, 1);
+    assert_eq!(narinfo_rows(&cluster, &src_link.store_path).await, 1);
+    Ok(())
+}
+
+/// Streamed source roots (empty origin — fetched flake inputs, toFile
+/// text) are served from the client CAS: a single file and a directory
+/// tree with no origin path on disk both upload and commit narinfo
+/// rows.
+// r[verify bc.upload.cas-read]
+#[tokio::test]
+async fn streamed_source_roots_upload_from_client_cas() -> TestResult {
+    use rio_nix::nar::{NarEntry, NarNode};
+
+    let cluster = TestCluster::new().await?;
+    let src_file = streamed_source_root(
+        cluster.cas.path(),
+        "fetched-patch",
+        &NarNode::Regular {
+            executable: false,
+            contents: b"+ patched line out of a fetched input\n".to_vec(),
+        },
+    );
+    let src_dir = streamed_source_root(
+        cluster.cas.path(),
+        "fetched-input",
+        &NarNode::Directory {
+            entries: vec![
+                NarEntry {
+                    name: "data.txt".into(),
+                    node: NarNode::Regular {
+                        executable: false,
+                        contents: b"streamed dir data\n".to_vec(),
+                    },
+                },
+                NarEntry {
+                    name: "docs".into(),
+                    node: NarNode::Directory {
+                        entries: vec![NarEntry {
+                            name: "run.sh".into(),
+                            node: NarNode::Regular {
+                                executable: true,
+                                contents: b"#!/bin/sh\necho hi\n".to_vec(),
+                            },
+                        }],
+                    },
+                },
+                NarEntry {
+                    name: "link".into(),
+                    node: NarNode::Symlink {
+                        target: "data.txt".into(),
+                    },
+                },
+            ],
+        },
+    );
+
+    let root = drvgen::make_drv("cas-src-root", &[], &[]);
+    let script = HashMap::from([(
+        "a".to_string(),
+        vec![single_frame(
+            "a",
+            &[&root],
+            vec![src_file.clone(), src_dir.clone()],
+            &root,
+        )],
+    )]);
+    let mut coordinator = cluster.coordinator(|_| {});
+    let (summary, _) = cluster.run(&mut coordinator, script, &["a"]).await?;
+    assert!(
+        matches!(summary.outcomes[0].state, OutcomeState::Completed { .. }),
+        "{:?}",
+        summary.outcomes[0].state
+    );
+    assert_eq!(narinfo_rows(&cluster, &src_file.store_path).await, 1);
+    assert_eq!(narinfo_rows(&cluster, &src_dir.store_path).await, 1);
+    Ok(())
+}
+
+/// Warm second run with sources: every source ack is in the persistent
+/// table, so the coordinator never re-reads an origin tree and never
+/// re-reads the client CAS — proven structurally by deleting the
+/// origins AND the CAS pack records before the warm run (a re-read
+/// would hard-fail, an ack hit cannot).
+// r[verify bc.negotiate.ack-short-circuit]
+#[tokio::test]
+async fn warm_source_acks_skip_origin_and_cas_reads() -> TestResult {
+    let cluster = TestCluster::new().await?;
+    let dir = tempfile::tempdir()?;
+    let tree = dir.path().join("tree");
+    write_source_tree(&tree);
+    let patch = dir.path().join("warm.patch");
+    std::fs::write(&patch, b"warm patch body\n")?;
+
+    let src_tree = source_root_for(&tree, "warm-tree");
+    let src_file = leaf_source_root(&patch, "warm-patch");
+    let src_streamed = streamed_source_root(
+        cluster.cas.path(),
+        "warm-fetched",
+        &rio_nix::nar::NarNode::Regular {
+            executable: false,
+            contents: b"warm streamed body\n".to_vec(),
+        },
+    );
+
+    let chain = drvgen::chain(&["warmsrc-leaf", "warmsrc-root"]);
+    let root = &chain[1];
+    let script = || {
+        HashMap::from([(
+            "a".to_string(),
+            vec![single_frame(
+                "a",
+                &[&chain[0], root],
+                vec![src_tree.clone(), src_file.clone(), src_streamed.clone()],
+                root,
+            )],
+        )])
+    };
+
+    let mut cold = cluster.coordinator(|_| {});
+    let (summary, _) = cluster.run(&mut cold, script(), &["a"]).await?;
+    assert!(matches!(
+        summary.outcomes[0].state,
+        OutcomeState::Completed { .. }
+    ));
+
+    // No origin, no CAS records: only the ack table can satisfy the
+    // warm run's source handling.
+    std::fs::remove_dir_all(&tree)?;
+    std::fs::remove_file(&patch)?;
+    std::fs::remove_dir_all(cluster.cas.path().join("packs"))?;
+
+    let mut warm = cluster.coordinator(|_| {});
+    let (summary, _) = cluster.run(&mut warm, script(), &["a"]).await?;
+    assert!(
+        matches!(summary.outcomes[0].state, OutcomeState::Completed { .. }),
+        "warm run must complete on ack hits alone: {:?}",
+        summary.outcomes[0].state
+    );
+    Ok(())
+}
+
+/// A single-file origin mutated between eval and upload fails that
+/// root loudly (the upload-time re-read recomputes the NAR hash),
+/// mirroring the directory-tree case above.
+// r[verify bc.upload.origin-reread+2]
+#[tokio::test]
+async fn mutated_file_origin_fails_upload_loudly() -> TestResult {
+    let cluster = TestCluster::new().await?;
+    let dir = tempfile::tempdir()?;
+    let patch = dir.path().join("mut.patch");
+    std::fs::write(&patch, b"original body\n")?;
+    let src = leaf_source_root(&patch, "mutating-patch");
+    // Mutate AFTER eval reported the digests.
+    std::fs::write(&patch, b"tampered body\n")?;
+
+    let root = drvgen::make_drv("mut-file-root", &[], &[]);
+    let script = HashMap::from([(
+        "a".to_string(),
+        vec![single_frame("a", &[&root], vec![src], &root)],
+    )]);
+    let mut coordinator = cluster.coordinator(|_| {});
+    let Err(err) = cluster.run(&mut coordinator, script, &["a"]).await else {
+        panic!("mutated single-file origin must fail the run");
+    };
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("changed since eval"),
         "error must name the mutation: {msg}"
     );
     Ok(())
