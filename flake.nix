@@ -1256,6 +1256,7 @@
                   crate2nixCli
                   docsLib
                   kaniToolchain
+                  nixForTests
                   ;
                 treefmtWrapper = config.treefmt.build.wrapper;
                 preCommitInstall = config.pre-commit.installationScript;

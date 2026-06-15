@@ -41,7 +41,7 @@ use tracing::{debug, info, instrument, warn};
 
 use crate::acks::ClusterAckTable;
 use crate::evalchan::EvalChannel;
-use crate::render::{RenderEvent, RenderHandle};
+use crate::render::{PrebuildSnapshot, RenderEvent, RenderHandle};
 use clients::Clients;
 use graph::{BuildGraph, Digest32, RootGate, SubmitOptions};
 use submit::SubmitMaterials;
@@ -54,10 +54,18 @@ pub struct CoordinatorOpts {
     pub tenant_name: String,
     pub keep_going: bool,
     pub page_max_nodes: usize,
+    /// Fetch completed outputs to the local machine (the CLI default;
+    /// `--no-fetch` turns it off). The destination is the local
+    /// /nix/store via the nix daemon, falling back to the client CAS
+    /// when no daemon is reachable.
     pub fetch: bool,
     pub out_link: Option<PathBuf>,
-    /// Flag-gated local IFD fallback (default off). P3b wires the
-    /// actual local build; until then the flag is parsed and plumbed,
+    /// Daemon socket override for the output import. `None` = the
+    /// standard location ([`crate::import::daemon_socket_path`]); tests
+    /// point this at a fake daemon or a nonexistent path.
+    pub daemon_socket: Option<PathBuf>,
+    /// Flag-gated local IFD fallback (default off). The flag is parsed
+    /// and plumbed; the actual local build is not wired yet,
     /// and an IFD under it fails with an explicit message instead of
     /// silently going remote.
     pub local_ifd: bool,
@@ -78,6 +86,7 @@ impl Default for CoordinatorOpts {
             page_max_nodes: 50_000,
             fetch: false,
             out_link: None,
+            daemon_socket: None,
             local_ifd: false,
             detach_on_interrupt: false,
             failure_log: FailureLogOpts::default(),
@@ -115,7 +124,8 @@ pub struct BuildOutcome {
     pub state: OutcomeState,
     /// `(drv_path, DerivationEventKind)` edges observed, in order.
     pub drv_events: Vec<(String, i32)>,
-    /// Materialized locations (`--fetch`).
+    /// Locally fetched output locations (imported `/nix/store` paths, or
+    /// CAS materializations on the daemonless fallback).
     pub fetched: Vec<PathBuf>,
 }
 
@@ -251,6 +261,11 @@ impl Coordinator {
         let mut shutdown_sent = false;
         let mut channel_closed = false;
         let mut interrupted = false;
+        // Pre-build narration counters (eval/upload/submit). The acked
+        // and accepted counts accumulate in the message arms below; the
+        // discovery counts are re-read from the graph each pass.
+        let mut prebuild = PrebuildSnapshot::default();
+        let mut prebuild_sent: Option<PrebuildSnapshot> = None;
 
         loop {
             // Spawn submits for every root whose gate opened.
@@ -283,6 +298,17 @@ impl Coordinator {
                 if channel_closed {
                     break;
                 }
+            }
+
+            // Pre-build narration: refresh the eval-discovery counts
+            // and hand the renderer a snapshot when anything changed.
+            prebuild.attrs_pending = expected.len();
+            prebuild.roots_found = graph.roots().len();
+            prebuild.drvs_found = graph.node_count();
+            prebuild.sources_found = graph.source_count();
+            if prebuild_sent != Some(prebuild) {
+                prebuild_sent = Some(prebuild);
+                self.render.send(RenderEvent::Prebuild(prebuild));
             }
 
             // Biased toward the internal queue: already-arrived state
@@ -460,6 +486,10 @@ impl Coordinator {
                 Internal::Uploaded(result) => {
                     pending_uploads -= 1;
                     let report = result.context("upload batch failed")?;
+                    prebuild.drvs_acked += report.acked_drvs.len();
+                    prebuild.sources_acked += report.acked_sources.len();
+                    prebuild.drvs_uploaded += report.uploaded_drvs;
+                    prebuild.sources_uploaded += report.uploaded_sources;
                     for d in &report.acked_drvs {
                         graph.mark_drv_acked(d);
                     }
@@ -486,7 +516,11 @@ impl Coordinator {
                     graph.drop_bodies(&digests);
                 }
                 Internal::Started { root_idx, build_id } => {
-                    info!(build_id = %build_id, attr = %graph.root(root_idx).attr, "build accepted");
+                    let attr = &graph.root(root_idx).attr;
+                    info!(build_id = %build_id, attr = %attr, "build accepted");
+                    self.render
+                        .note(format!("{attr}: build {build_id} accepted"));
+                    prebuild.builds_accepted += 1;
                     build_ids.insert(root_idx, build_id);
                 }
                 Internal::Finished { root_idx, result } => {
@@ -674,26 +708,32 @@ impl Coordinator {
         }
         outcomes.extend(eval_failures);
 
-        // `--fetch`: materialize completed outputs into the CAS.
+        // Default fetch: import completed outputs into the local
+        // /nix/store (CAS fallback when no daemon is reachable) and
+        // create the out-links. `--no-fetch` clears `opts.fetch`.
+        // r[impl bc.fetch.store-import-default]
+        // r[impl bc.outlink.nix-parity]
         if self.opts.fetch && !interrupted {
+            let socket = self
+                .opts
+                .daemon_socket
+                .clone()
+                .unwrap_or_else(crate::import::daemon_socket_path);
+            let note_render = self.render.clone();
+            let mut fetcher =
+                crate::import::OutputFetcher::new(socket, self.cas_root.clone(), move |note| {
+                    note_render.note(note)
+                });
             let mut link_idx = 0usize;
             for outcome in &mut outcomes {
                 let OutcomeState::Completed { output_paths } = &outcome.state else {
                     continue;
                 };
                 for path in output_paths.clone() {
-                    let dest =
-                        crate::fetch::materialize(&mut self.clients, &self.cas_root, &path).await?;
+                    let fetched = fetcher.fetch(&mut self.clients, &path).await?;
+                    let dest = fetched.local_path().to_path_buf();
                     if let Some(link) = &self.opts.out_link {
-                        let target = if link_idx == 0 {
-                            link.clone()
-                        } else {
-                            // result, result-2, result-3 … (nix's
-                            // multi-output out-link numbering).
-                            let mut name = link.file_name().unwrap_or_default().to_os_string();
-                            name.push(format!("-{}", link_idx + 1));
-                            link.with_file_name(name)
-                        };
+                        let target = crate::fetch::numbered_link(link, link_idx);
                         crate::fetch::out_link(&target, &dest)?;
                         link_idx += 1;
                     }

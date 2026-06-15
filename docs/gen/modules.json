@@ -1051,6 +1051,16 @@
       "doc": "Write opcode handlers (add-to-store, add-text, add-multiple)."
     },
     {
+      "path": "handler/put_path.rs",
+      "depth": 1,
+      "doc": "`PutPath` lane wrappers over the pure [`super::singleflight`] mechanism."
+    },
+    {
+      "path": "handler/singleflight.rs",
+      "depth": 1,
+      "doc": "Per-process coalescing of concurrent uploads for the same `(tenant, store-path)`."
+    },
+    {
       "path": "lib.rs",
       "depth": 0,
       "doc": "SSH gateway and Nix protocol frontend for rio-build."
@@ -1584,7 +1594,7 @@
     {
       "path": "db/batch.rs",
       "depth": 1,
-      "doc": "Batch operations for `persist_merge_to_db` — build-derivation mapping + `COPY`-streamed bulk inserts."
+      "doc": "Batch operations for `persist_merges` — build-derivation mapping + `COPY`-streamed bulk inserts."
     },
     {
       "path": "db/builds.rs",
@@ -1674,7 +1684,7 @@
     {
       "path": "grpc/digest_submit.rs",
       "depth": 1,
-      "doc": "Digest-bearing `SubmitBuild` handling (ADR-024 P2a)."
+      "doc": "Digest-bearing `SubmitBuild` handling (ADR-024)."
     },
     {
       "path": "grpc/executor_service.rs",
@@ -1684,7 +1694,7 @@
     {
       "path": "grpc/paginate.rs",
       "depth": 1,
-      "doc": "Paginated `SubmitBuild` assembly (ADR-024 P2a)."
+      "doc": "Paginated `SubmitBuild` assembly (ADR-024)."
     },
     {
       "path": "grpc/scheduler_service.rs",
@@ -1981,7 +1991,7 @@
     {
       "path": "grpc/drv_blob.rs",
       "depth": 1,
-      "doc": "DrvBlobService (ADR-024 P2): derivations as a first-class castore blob kind."
+      "doc": "DrvBlobService (ADR-024): derivations as a first-class castore blob kind."
     },
     {
       "path": "grpc/get_path.rs",
