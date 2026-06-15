@@ -570,6 +570,30 @@ impl SchedulerService for SchedulerGrpc {
         }))
     }
 
+    type GetDerivationLogStream = super::derivation_log::LogStream;
+
+    /// Stream a stored derivation-execution log for a build the caller
+    /// owns (`rio log`, and the client's failure replay after a
+    /// fail-fast). Tenant scoping, execution resolution and the
+    /// server-side tail cursor live in `grpc/derivation_log.rs`; the
+    /// byte-serving body is shared with `AdminService.GetDerivationLogs`.
+    #[instrument(skip(self, request), fields(rpc = "GetDerivationLog"))]
+    async fn get_derivation_log(
+        &self,
+        request: Request<rio_proto::scheduler::GetDerivationLogRequest>,
+    ) -> Result<Response<Self::GetDerivationLogStream>, Status> {
+        rio_proto::interceptor::link_parent(&request);
+        self.ensure_leader()?;
+        // r[impl sched.tenant.authz+2]
+        let caller = self.require_tenant(&request).await?;
+        let jwt_token = request
+            .metadata()
+            .get(rio_proto::TENANT_TOKEN_HEADER)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+        super::derivation_log::get_derivation_log(self, caller.tenant(), jwt_token, request).await
+    }
+
     // r[impl sched.tenant.resolve+2]
     /// Name→UUID resolution exposed as an RPC for the gateway's JWT
     /// mint path. Same `resolve_tenant_name` helper as SubmitBuild's

@@ -2636,7 +2636,7 @@ pub const M_112: () = ();
 /// `manifests` UPDATE.
 pub const M_113: () = ();
 
-// BURNED NUMBERS — 069 and 070 (next free migration: 073):
+// BURNED NUMBERS — 069 and 070 (next free migration: 076):
 //
 // - 069/070 were rio_app role/grant migrations that ARE applied on
 //   the persistent DB (recorded rows in `_sqlx_migrations`) and were
@@ -2736,6 +2736,41 @@ pub const M_115: () = ();
 /// time: the only reader is `HasChunks`' `(blake3_hash = ANY, tenant_id
 /// =)` probe, which the PK serves.
 pub const M_116: () = ();
+
+/// 117 — persisted failure reason + culprit execution on `derivations`.
+///
+/// `failure_msg` is the builder-reported error text of the attempt that
+/// drove the derivation terminal-failed (Poisoned), truncated scheduler-
+/// side to ~4 KiB. `failure_exec_id` is the execution that produced it
+/// (the `exec_id_for_terminal` resolution at the poison site) — NULLable
+/// because a derivation can poison without ever reaching a worker
+/// (fleet exhaustion while Ready, recovery-time poison adoption).
+///
+/// Before this, the error text lived only in the live
+/// `DerivationEvent::failed` broadcast: a later build that fail-fasts on
+/// the already-poisoned node (merge-time `reconcile_preexisting`) had
+/// nothing to show the client beyond "derivation X failed", and named a
+/// cascaded ancestor rather than the real culprit. The merge fail-fast
+/// path point-SELECTs these columns to attribute the failure and to
+/// serve the original log tail (`GetDerivationLog`).
+///
+/// Both columns are per-poison-cycle state: `clear_poison`,
+/// `clear_poison_batch` (resubmit reset) NULL them so a stale reason
+/// can't outlive the failure it described.
+pub const M_117: () = ();
+
+/// 118 — partial `build_derivations(exec_id)` index for
+/// `SchedulerService.GetDerivationLog`.
+///
+/// The tenant-facing log RPC resolves "which execution may I serve"
+/// from PG: by drv path across the caller's builds when no build is
+/// pinned (115: `derivations(drv_path)`), and by execution id when the
+/// client pins one (this migration: partial `build_derivations(exec_id)`
+/// — the column landed in 061 with no index because nothing probed it).
+/// Without these the per-request probes are seq scans over two of the
+/// largest scheduler tables. One `CREATE INDEX CONCURRENTLY` — the
+/// single-statement no-transaction rule from 022/071.
+pub const M_118: () = ();
 
 // Add M_NNN consts for other migrations as commentary accumulates.
 // Not all migrations need one — only those with non-obvious history,

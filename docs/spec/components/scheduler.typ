@@ -494,6 +494,26 @@ epilogue in the success path).
   auth before a JWT exists.
 ]
 
+#r("sched.log.tenant-scoped")[
+  `GetDerivationLog` MUST derive the caller's tenant from the
+  interceptor-attached `TenantClaims.sub` (the same `require_tenant`
+  chokepoint as the other SchedulerService RPCs) and MUST serve log content
+  only for an execution attributable to a build owned by that tenant via the
+  build↔execution record (`build_derivations.exec_id`), regardless of which
+  build or execution the request names. A request whose named execution
+  belongs to another tenant yields an empty stream (no content, no error); a
+  derivation with no execution under the caller's builds is `NOT_FOUND`,
+  identical whether or not other tenants ever built it.
+]
+
+The content gate is on the EXECUTION being served, not merely on the
+requested build: a fail-fast culprit (#rref("sched.merge.failfast-culprit"))
+may name an execution that ran for a different tenant's build of the same
+derivation --- the caller still gets the persisted reason text via
+`BuildFailed.culprit_error_message`, but never that execution's log bytes.
+A pinned `build_id` additionally requires ownership of that build
+(`PERMISSION_DENIED` on mismatch) and membership of the derivation in it.
+
 #r("sched.store-client.reconnect")[
   The scheduler's gRPC channel to rio-store MUST use lazy connection
   (`Endpoint::connect_lazy`) with HTTP/2 keepalive so store pod rollouts do not
@@ -2937,6 +2957,26 @@ on every concurrent-build closure overlap, wiping per-cycle retry
 budgets and inflating `resubmit_cycles` past the
 #rref("sched.merge.poisoned-resubmit-bounded") bound for hot shared
 deps. The consumer half is #rref("ctrl.pool.giveup-exit-mintable").
+
+#r("sched.merge.failfast-culprit")[
+  When a merge fail-fasts because a pre-existing node is still terminally
+  failed --- `poisoned` with its resubmit-reset cycles exhausted
+  (#rref("sched.merge.poisoned-resubmit-bounded")), or `dependency_failed`
+  beneath such a node --- the resulting `BuildFailed` MUST attribute the
+  failure to the poisoned culprit derivation itself (not to a cascaded
+  ancestor) and MUST carry the culprit's persisted failure reason and
+  originating execution id when they are recorded.
+]
+
+The attribution makes the cached failure debuggable from the client: the
+culprit names which derivation to look at, the persisted reason
+(#rref("obs.log.failure-reason-persisted")) explains why it failed even when
+the original execution produced no log lines, and the execution id is what the
+client passes to `GetDerivationLog` to replay the original log tail. When no
+poisoned node is reachable from the surfaced failure (the poisoned dependency
+was cleared between the cascade and this merge), the failure keeps the generic
+"derivation X failed" summary --- attribution is best-effort, never a reason to
+fail the merge differently.
 
 #r("sched.merge.stale-completed-verify+5")[
   When a build merges and finds a pre-existing `completed` or `skipped` node in

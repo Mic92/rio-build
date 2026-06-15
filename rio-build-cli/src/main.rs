@@ -21,7 +21,7 @@ use clap::{Args, Parser, Subcommand};
 use rio_build_cli::acks::ClusterAckTable;
 use rio_build_cli::config::{Config, ConfigOverlay};
 use rio_build_cli::coordinator::clients::Clients;
-use rio_build_cli::coordinator::{Coordinator, CoordinatorOpts, OutcomeState};
+use rio_build_cli::coordinator::{Coordinator, CoordinatorOpts, FailureLogOpts, OutcomeState};
 use rio_build_cli::{evalchan, render};
 
 #[derive(Parser)]
@@ -35,6 +35,10 @@ struct Cli {
 enum Command {
     /// Submit builds over the native protocol (ADR-024).
     Build(BuildArgs),
+    /// Print a derivation's stored build log from the cluster
+    /// (the native replacement for `nix log`, which cannot work over
+    /// ssh-ng).
+    Log(LogArgs),
 }
 
 #[derive(Args)]
@@ -96,6 +100,16 @@ struct BuildArgs {
     #[arg(long)]
     keep_going: bool,
 
+    /// When the build fails on a derivation that already failed in an
+    /// earlier build, replay the last N lines of the original failure's
+    /// log.
+    #[arg(long, default_value = "20", value_name = "N")]
+    log_lines: u32,
+
+    /// Replay the original failure's full build log instead of a tail.
+    #[arg(short = 'L', long)]
+    print_build_logs: bool,
+
     /// Renderer: auto picks tty when stderr+stdin are a tty and
     /// TERM≠dumb, ci when GITHUB_ACTIONS is set, otherwise plain (one
     /// line per state edge, for scripts).
@@ -115,6 +129,34 @@ struct BuildArgs {
     overlay: ConfigOverlay,
 }
 
+/// Arguments for `rio log`: read a stored derivation log for a build
+/// owned by this tenant. A data command — raw log bytes on stdout,
+/// status and errors on stderr.
+#[derive(Args)]
+struct LogArgs {
+    /// Full /nix/store/...-*.drv path whose log to print. Resolving an
+    /// installable/attr to its derivation needs an evaluation and is not
+    /// supported yet — pass the .drv path (e.g. from a failure message).
+    #[arg(value_name = "DRV_PATH")]
+    drv_path: String,
+
+    /// Pin the build the log should belong to. Default: the most recent
+    /// execution of the derivation among your own builds.
+    #[arg(long, value_name = "BUILD_ID")]
+    build: Option<String>,
+
+    /// Pin a specific execution id (e.g. from a failure message).
+    #[arg(long, value_name = "EXEC_ID")]
+    exec: Option<String>,
+
+    /// Print only the last N lines. Default: the full log.
+    #[arg(long, value_name = "N")]
+    log_lines: Option<u32>,
+
+    #[command(flatten)]
+    overlay: ConfigOverlay,
+}
+
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let _otel = rio_common::observability::init_tracing("build-client")?;
@@ -123,6 +165,7 @@ fn main() -> anyhow::Result<()> {
         .build()?;
     match cli.command {
         Command::Build(args) => runtime.block_on(run_build(args)),
+        Command::Log(args) => runtime.block_on(run_log(args)),
     }
 }
 
@@ -144,6 +187,79 @@ fn nix_verbosity_env(level: tracing::level_filters::LevelFilter) -> Option<&'sta
     } else {
         None
     }
+}
+
+/// `rio log <DRV_PATH> [--build] [--exec] [--log-lines]`: stream a
+/// stored derivation log to stdout. Works without an eval parent
+/// configured (like `--attach`/`--cancel`); ownership and tenancy are
+/// enforced server-side — the scheduler only serves executions
+/// attributable to this tenant's builds.
+async fn run_log(args: LogArgs) -> anyhow::Result<()> {
+    // Fail early on anything that isn't a .drv store path: attr →
+    // derivation resolution would need an evaluation (eval parent), which
+    // this data command deliberately avoids.
+    match rio_nix::store_path::StorePath::parse(&args.drv_path) {
+        Ok(sp) if sp.is_derivation() => {}
+        _ => bail!(
+            "{:?} is not a /nix/store/...-*.drv path. Resolving an installable to its \
+             derivation needs an evaluation and is not supported yet — pass the .drv path \
+             printed in the build output or failure message.",
+            args.drv_path
+        ),
+    }
+
+    let cfg: Config = rio_common::config::load("build", &args.overlay)?;
+    cfg.validate()?;
+    let token = cfg.tenant_token()?;
+    let mut clients = Clients::connect(&cfg.scheduler_addr, &cfg.store_addr, token)
+        .await
+        .context("connecting to cluster")?;
+
+    let req = rio_proto::scheduler::GetDerivationLogRequest {
+        build_id: args.build.unwrap_or_default(),
+        derivation_path: args.drv_path.clone(),
+        exec_id: args.exec.unwrap_or_default(),
+        tail_lines: args.log_lines.unwrap_or(0),
+        since_line: 0,
+    };
+    let mut stream = clients
+        .scheduler
+        .get_derivation_log(clients.req(req)?)
+        .await
+        .map_err(|status| anyhow::anyhow!("{}", status.message()))?
+        .into_inner();
+
+    // Raw log bytes to stdout — this is the machine-readable surface;
+    // status and errors stay on stderr.
+    use std::io::Write;
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    let mut printed = 0usize;
+    loop {
+        match stream.message().await {
+            Ok(Some(chunk)) => {
+                for raw in &chunk.lines {
+                    out.write_all(raw)?;
+                    out.write_all(b"\n")?;
+                    printed += 1;
+                }
+                if chunk.is_complete {
+                    break;
+                }
+            }
+            Ok(None) => break,
+            Err(status) => bail!("log stream failed: {}", status.message()),
+        }
+    }
+    out.flush()?;
+    if printed == 0 {
+        bail!(
+            "no log available for {} (no execution recorded under your builds, the execution \
+             produced no output, or the log has expired)",
+            args.drv_path
+        );
+    }
+    Ok(())
 }
 
 async fn run_build(args: BuildArgs) -> anyhow::Result<()> {
@@ -175,9 +291,14 @@ async fn run_build(args: BuildArgs) -> anyhow::Result<()> {
     // High while a pager owns the terminal: Ctrl-C must reach the pager
     // (exits less follow mode), not abort builds behind its back.
     let pager_gate = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let failure_log = FailureLogOpts {
+        log_lines: args.log_lines,
+        print_build_logs: args.print_build_logs,
+    };
     if let Some(id) = &args.attach {
         let (render, render_task) = render::spawn(render_opts, pager_gate);
-        let outcome = rio_build_cli::coordinator::attach_build(&mut clients, id, 0, render).await?;
+        let outcome =
+            rio_build_cli::coordinator::attach_build(&mut clients, id, render, failure_log).await?;
         let _ = render_task.await;
         return finish(
             vec![outcome],
@@ -252,6 +373,7 @@ async fn run_build(args: BuildArgs) -> anyhow::Result<()> {
             out_link: args.out_link,
             local_ifd: args.local_ifd,
             detach_on_interrupt: args.detach,
+            failure_log,
             ..CoordinatorOpts::default()
         },
         render,
@@ -440,7 +562,7 @@ async fn finish(
 
 #[cfg(test)]
 mod tests {
-    use super::{Cli, FileEvalOpts, eval_plan, nix_verbosity_env};
+    use super::{Cli, Command, FileEvalOpts, eval_plan, nix_verbosity_env};
     use clap::Parser;
     use std::path::Path;
     use tracing::level_filters::LevelFilter;
@@ -545,6 +667,62 @@ mod tests {
                 "probe=/tmp/probe",
             ]
         );
+    }
+
+    fn build_args(argv: &[&str]) -> super::BuildArgs {
+        match Cli::try_parse_from(argv).unwrap().command {
+            Command::Build(args) => args,
+            Command::Log(_) => panic!("expected `rio build`"),
+        }
+    }
+
+    #[test]
+    fn log_lines_flags_parse() {
+        // Failure-replay knobs: --log-lines N tail (default 20) and
+        // -L/--print-build-logs for the full log.
+        let args = build_args(&["rio", "build", ".#x", "--log-lines", "5", "-L"]);
+        assert_eq!(args.log_lines, 5);
+        assert!(args.print_build_logs);
+
+        let args = build_args(&["rio", "build", ".#x"]);
+        assert_eq!(args.log_lines, 20);
+        assert!(!args.print_build_logs);
+    }
+
+    #[test]
+    fn rio_log_subcommand_parses() {
+        let drv = "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-x.drv";
+        let args = match Cli::try_parse_from([
+            "rio",
+            "log",
+            drv,
+            "--build",
+            "0190f7a1-7c2e-7d10-b5c5-3be41b1c6f7e",
+            "--exec",
+            "0190f7a1-7c2e-7d10-b5c5-3be41b1c6f00",
+            "--log-lines",
+            "7",
+        ])
+        .unwrap()
+        .command
+        {
+            Command::Log(args) => args,
+            Command::Build(_) => panic!("expected `rio log`"),
+        };
+        assert_eq!(args.drv_path, drv);
+        assert_eq!(
+            args.build.as_deref(),
+            Some("0190f7a1-7c2e-7d10-b5c5-3be41b1c6f7e")
+        );
+        assert!(args.exec.is_some());
+        assert_eq!(args.log_lines, Some(7));
+
+        // Drv path only: build/exec unpinned, full log.
+        let args = match Cli::try_parse_from(["rio", "log", drv]).unwrap().command {
+            Command::Log(args) => args,
+            Command::Build(_) => panic!("expected `rio log`"),
+        };
+        assert!(args.build.is_none() && args.exec.is_none() && args.log_lines.is_none());
     }
 
     #[test]
