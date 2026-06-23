@@ -182,7 +182,7 @@
   crate-count: () => [#_ws-names.len()],
   crate-list: () => _ws-names.map(raw).join(", "),
   gh: pl => link(
-    "https://github.com/lovesegfault/rio-build/blob/"
+    "https://github.com/anthropics/rio/blob/"
       + _gh-sha
       + "/"
       + pl.replace(":", "#L"),

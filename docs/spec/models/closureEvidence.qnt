@@ -3449,7 +3449,7 @@ module closureEvidenceCornerFailoverDuo {
 // A4 (bughunt wave): the reap-truncation corner — STANDALONE module per
 // RDC-5 (the archived module above is an owner-waivered verbatim
 // predecessor record; extensions land as appended modules importing the
-// archived definitions — the FailoverDuo-corner pattern, 15c9ef076).
+// archived definitions — the FailoverDuo-corner pattern, 785bbf7db).
 // RDC-5 posture (recorded 2026-06-03, folded here from the retired
 // retired invariant map): the archived module text above remains VERBATIM;
 // extensions land only as appended standalone modules like this one.

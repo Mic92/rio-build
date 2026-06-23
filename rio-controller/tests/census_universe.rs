@@ -11,7 +11,7 @@
 #![allow(dead_code)]
 
 /// EVERY `.rs` under `rio-controller/src`, embedded at compile time
-/// (the S1/b870121ac CENSUS_SOURCES form). Machine-generated — sorted
+/// (the S1/f0a73b87a CENSUS_SOURCES form). Machine-generated — sorted
 /// (relpath, include_str!) pairs; the completeness pin
 /// (`census_universe_matches_live_tree`) forces this table to track
 /// the live tree exactly in both directions.

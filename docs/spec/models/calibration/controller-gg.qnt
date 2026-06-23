@@ -12,7 +12,7 @@
 //     docs/spec/models/calibration/controller-gg.qnt
 
 // =========================================================================
-// CALIBRATION — pre-1779975f6 (the is_pending_job half): the pending
+// CALIBRATION — pre-d7aa311b9 (the is_pending_job half): the pending
 // predicate did not filter Jobs with a deletionTimestamp, so a Job being
 // foreground-deleted still counted as Pending everywhere the census is
 // consumed. On today's protocol the sharpest consequence is in the ack

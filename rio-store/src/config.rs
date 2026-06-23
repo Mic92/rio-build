@@ -467,7 +467,7 @@ pub fn effective_substitute_admission_cap(overridden: Option<usize>, pg_max: u32
 /// the WHOLE admission gate: full worker occupancy meant whole-gate
 /// occupancy, miss traffic answered RESOURCE_EXHAUSTED, and the
 /// executor self-parked — the rejection was a SAFETY argument. The
-/// structural P = cap/2 split (e77b67e7c, this fn) REMOVED that
+/// structural P = cap/2 split (37ea2b7ca, this fn) REMOVED that
 /// premise: the executor's total gate draw is bounded by P whatever
 /// n and F are, so a future n raise is GATE-SAFE by construction.
 /// What remains is POOL arithmetic: at the production values

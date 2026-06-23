@@ -86,7 +86,7 @@ impl Scenario for BlackholeSelfTest {
             // no i048c-warmup SSH session, controller had no spawn
             // intent — the bg task died silently and `bg.abort()` ate
             // the evidence. Instrument-first (same pattern as
-            // 166e6f5fe / i209): surface the bg task's state so the
+            // dbfa50ce7 / i209): surface the bg task's state so the
             // next failure points at a leg.
             let bg_state = if bg.is_finished() {
                 match bg.await {

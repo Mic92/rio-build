@@ -11,7 +11,7 @@
 //     --invariant=<predicted> docs/spec/models/calibration/controller-gb.qnt
 
 // =========================================================================
-// CALIBRATION — pre-cdc78f839: AckSpawnedIntents{spawned} chained the
+// CALIBRATION — pre-857c21cc2: AckSpawnedIntents{spawned} chained the
 // ATTEMPTED spawn slice, not the successfully-created one, so a failed
 // create (and a 409 collision against a terminating Job) was still acked
 // — the scheduler armed dispatched_cells for an intent with no Job
@@ -109,7 +109,7 @@ module gbCalibAckAttempted {
 
     val pendingNotReaped = postGate.filter(i =>
       isPending(jobsAtList.get(i)) and not(reaped.contains(i)))
-    // PRE-FIX (cdc78f839): the attempted slice is acked, success or not.
+    // PRE-FIX (857c21cc2): the attempted slice is acked, success or not.
     val toAck = pendingNotReaped.union(toSpawn)
     val ackHappens = toAck.size() > 0 and not(ackFails)
 
@@ -273,7 +273,7 @@ module gbCalibAckAttempted {
 }
 
 // =========================================================================
-// CALIBRATION — pre-5815a7544: the ack carried only the intents spawned
+// CALIBRATION — pre-5397464ac: the ack carried only the intents spawned
 // THIS tick; an already-Pending Job (spawned on an earlier tick) was
 // never re-acked, so a restarted scheduler (whose in-memory
 // dispatched_cells emptied) was never re-armed for it — the heartbeat
@@ -374,7 +374,7 @@ module gbCalibAckOnlyNew {
 
     val pendingNotReaped = postGate.filter(i =>
       isPending(jobsAtList.get(i)) and not(reaped.contains(i)))
-    // PRE-FIX (5815a7544): only the newly-spawned intents are acked.
+    // PRE-FIX (5397464ac): only the newly-spawned intents are acked.
     val toAck = spawnedSet
     val ackHappens = toAck.size() > 0 and not(ackFails)
 

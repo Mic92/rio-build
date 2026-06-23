@@ -176,7 +176,7 @@ impl DagActor {
                     // instead of reading the RAM
                     // counters; verdict-identical on every single-tenure history
                     // reachable today. Kept rather than deleted (decision P2,
-                    // the narrowed b09c5b312-X6 disposition): the backstop's
+                    // the narrowed 5e9f8a331-X6 disposition): the backstop's
                     // poison verdict no longer depends on this check since the
                     // E8 collapse decides at its own site, but it remains the
                     // requeue-time re-poison path and the post-failover

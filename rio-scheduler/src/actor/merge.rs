@@ -29,7 +29,7 @@ pub(super) const MERGE_PERSIST_BATCH_MAX: usize = 32;
 /// P2 flush trigger (iv): a queued merge persists at most this
 /// long after the FIRST push of its batch. The 50 ms initial value was
 /// sized for the 6 ms/merge projection; live (sdd/submitbuild-
-/// exhausted-diag.md § "ResourceExhausted persists on 1abed77ee")
+/// exhausted-diag.md § "ResourceExhausted persists on 17fcd9711")
 /// observed N̄=2.63 at 165 ms/merge — the deadline arm fires every
 /// rx-idle gap and batches stay tiny, so phase-5 amortization never
 /// happens. 250 ms gives N̄≈10-15 → real amortization, while still

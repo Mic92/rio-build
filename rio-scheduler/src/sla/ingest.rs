@@ -557,7 +557,7 @@ fn hw_bias(
 /// `fit`'s curve); `wall_t` is the raw wall-clock duration. The
 /// log-residual needs the former; the poll-granularity floor needs the
 /// latter — keeping both explicit prevents the unit mismatch that
-/// `c6163485` left behind.
+/// `078510bd` left behind.
 ///
 /// Gated on `n_eff ≥ 5`: with fewer effective samples MAD is unstable
 /// and the explore ladder is still walking — rejecting then would
@@ -1600,7 +1600,7 @@ mod tests {
         );
         // factor-3 hw observing the SAME ref_t residual: wall_t=5/3≈1.67
         // → floor=0.6, gate≈2.67. The 1.5× residual is still kept —
-        // pre-6956f6ea passed ref_t (≈420) for wall_t, giving floor≈0.0024
+        // pre-5f19cbb4 passed ref_t (≈420) for wall_t, giving floor≈0.0024
         // and gate≈0.011, which WOULD have flagged it.
         assert!(
             !is_outlier(pred * 1.5, 5.0 / 3.0, 8.0, &fit, 1.0),
@@ -2375,7 +2375,7 @@ mod disk_axis_tests {
             "7.949938/7.949938/7.108503",
             "the ring-weight fit path moved — the scalar-domain split \
              must not touch the design matrix (pinned at the pre-fix \
-             tree, 750323568 + c1/c2)"
+             tree, 659bed8ee + c1/c2)"
         );
     }
 

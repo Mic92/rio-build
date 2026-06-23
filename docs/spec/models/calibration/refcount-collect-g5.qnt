@@ -2,7 +2,7 @@
 //
 // Acceptance re-run, family G5, against the REPLACEMENT model
 // (refcount-formal plan T-1a.6; design §4.6): the heartbeat removed —
-// the pre-`a1b49b4a3` shape — re-pointed from the as-built model
+// the pre-`66613b03f` shape — re-pointed from the as-built model
 // (calibration/refcount-g5.qnt, Stage C) at chunkCollect.qnt. The
 // heartbeat survives the replacement as a path-row janitor mechanism
 // (design §4.2); if removing it no longer falsified S5 in its

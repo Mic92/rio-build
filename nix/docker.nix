@@ -210,7 +210,7 @@ let
 
   # OCI-standard labels for provenance.
   mkLabels = desc: {
-    "org.opencontainers.image.source" = "https://github.com/lovesegfault/rio-build";
+    "org.opencontainers.image.source" = "https://github.com/anthropics/rio";
     "org.opencontainers.image.description" = desc;
     "org.opencontainers.image.licenses" = "MIT OR Apache-2.0";
   };

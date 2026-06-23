@@ -12,9 +12,9 @@
 //
 // Stage-C calibration override, closure-evidence family F7 (the
 // topdown_pruned mark lifecycle; corpus rep CE-30,
-// c2decee6c/ba48fca15/60a3a19be — clears decided with unbuilt children
+// 30163e73f/0d1700575/3be2a00f9 — clears decided with unbuilt children
 // present, or before reconciliation, dropped the mark while the closure
-// was NOT in the store; CE-28 4e581f359 is the same has-children-vs-
+// was NOT in the store; CE-28 90ad2d83b is the same has-children-vs-
 // children-produced confusion at the stamp-skip site). The
 // reconciliation-ordering family F12 (CE-69 → ENC-A CE-30 in the
 // design crosswalk) is covered by this same representative. Crosswalk

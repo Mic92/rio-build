@@ -1237,7 +1237,7 @@ mod bw8s1_budget {
     // production gRPC and the production Substituter, asserted
     // structurally (permit counts, completion, typed status codes).
     // Batch-as-holder is W8-F (WO-S1-2a), same slot, same gate.
-    /// RED pre-fix (verbatim, run at 83e596f0c): `left: neither leg
+    /// RED pre-fix (verbatim, run at 8f6e71592): `left: neither leg
     /// completed within the observation bound; available_permits == 0
     /// pinned below both demands (head demands 2016 > B − H = 1096;
     /// the holder's next chunk acquire queues behind the parked head;
@@ -1359,7 +1359,7 @@ mod bw8s1_budget {
     // W8-C (R16 statement): ingest-holder residency through the
     // production stream path including cleanup — a stopped-but-
     // connected client cannot hold permits past the ingest envelope.
-    /// RED pre-fix (verbatim, run at 83e596f0c): `left: held_permits
+    /// RED pre-fix (verbatim, run at 8f6e71592): `left: held_permits
     /// retained at 3× the would-be ingest envelope (stopped-but-
     /// connected client; available_permits == 57344 of 65536) /
     /// right: typed resource_exhausted abort; permits restored ≤
@@ -1421,7 +1421,7 @@ mod bw8s1_budget {
     // BUDGET_WAIT_GRACE (batch included by the census-pinned shared
     // body), with the pool packed by a production reservation gated
     // mid-read.
-    /// RED pre-fix (verbatim, run at 83e596f0c): `left: chunk acquire
+    /// RED pre-fix (verbatim, run at 8f6e71592): `left: chunk acquire
     /// still pending at 3× the would-be wait grace (parked behind a
     /// production reservation; the chokepoint has no wait bound) /
     /// right: resource_exhausted ≤ grace+slack; a post-drain retry
@@ -1613,7 +1613,7 @@ mod bw8s1_budget {
     // production batch stream path -- with it, the holder census has
     // zero unenveloped rows and the slot theorem's quantifier domain
     // is the complete census.
-    /// RED pre-fix (run at the WO-S1-1 tip a721c259d -- batch was the
+    /// RED pre-fix (run at the WO-S1-1 tip de17eb73d -- batch was the
     /// one remaining unbounded holder): see the commit body for the
     /// verbatim left/right transcript.
     #[tokio::test]

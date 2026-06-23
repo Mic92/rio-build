@@ -188,7 +188,7 @@ const STORE_GAUGE_INTERVAL: std::time::Duration = std::time::Duration::from_secs
 ///   - every SAMPLED (read-then-set) store gauge MUST be
 ///     floor-published by a periodic tick — a sampled gauge whose
 ///     only refresh rides an RPC freezes when the caller retires (the
-///     c9a9d163e ComponentScaler→KEDA orphan class), and its
+///     861000c16 ComponentScaler→KEDA orphan class), and its
 ///     read/set edges can lose a concurrent-drop update (bug_245;
 ///     this tick is that class's ≤30 s healer). Members: the two
 ///     gauges above (this tick) + the gc gauges

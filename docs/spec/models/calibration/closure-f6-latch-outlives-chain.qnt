@@ -12,7 +12,7 @@
 //
 // Stage-C calibration override, closure-evidence family F6
 // (forgiveness / never_forgive chain scoping; corpus reps CE-20
-// 71e37da5f and CE-21 5113de5c8 — the spent-forgiveness latch survived
+// 98f52bedd and CE-21 209e2b56f — the spent-forgiveness latch survived
 // the chain that created it, so a later, unrelated chain refused
 // forgiveness and demoted a substitutable node to source). Crosswalk
 // row: closure-evidence-formal-design.md §4 "F6 CE-20, CE-21, CE-22 →
@@ -102,7 +102,7 @@ module closureCalibF6LatchOutlivesChain {
   /// PRE-FIX walk consumption: identical to consumeWalk except the
   /// forgiven-now-wanted downgrade's REVERT arm keeps the grown
   /// never-forgive set instead of clearing it with the chain
-  /// (pre-71e37da5f node-lifetime scoping). Every other branch and
+  /// (pre-98f52bedd node-lifetime scoping). Every other branch and
   /// every latch is the live model's AS OF THE FREEZE — this copy also
   /// predates the Phase-1 Broken-arm settlement (its Broken arm is the
   /// pre-settlement direct fail-fast), which is intentional: the copy

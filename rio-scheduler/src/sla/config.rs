@@ -1957,7 +1957,7 @@ mod tests {
     /// lives at the ONE serde seam, so every consumer (λ-filter, EMA
     /// scope, the `interrupt_samples.cluster` stamp) and every future
     /// one reads the same alphabet the controller's `ClusterId::new`
-    /// mints uids from. TRUE RED at 83e596f0c: `left: " prod-eu " /
+    /// mints uids from. TRUE RED at 8f6e71592: `left: " prod-eu " /
     /// right: "prod-eu"` — pre-fix the field was a bare
     /// `#[serde(default)] String` bound raw into SQL, so ids
     /// differing only in whitespace passed the render gate as

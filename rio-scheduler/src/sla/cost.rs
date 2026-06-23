@@ -4599,7 +4599,7 @@ mod tests {
     /// node_count:b converged to ~3× truth — inflating n_lambda and
     /// pinning lambda-hat toward seed. Post-fix each class windows
     /// from ITS OWN previous stamp: (1800, 1800) ⇒ truth (~1). The
-    /// wave-12 retouch (bc04b08cc) kept the global dt under the test
+    /// wave-12 retouch (e0b467ca9) kept the global dt under the test
     /// name "fold node-count rates per class over their own windows"
     /// — this witness makes the name's claim its content under
     /// REPEATED skew (two full waves).

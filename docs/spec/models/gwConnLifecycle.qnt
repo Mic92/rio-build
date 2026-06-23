@@ -73,12 +73,12 @@
 //
 // CORRECTIONS APPLIED AT CLOSE-OUT (record text only; code, model and
 // checks needed no changes): (1) MATERIAL — churn-pin provenance: the
-// inventory was mined at cccb4d778 but the corpus at origin/main dfe9a5569;
+// inventory was mined at cccb4d778 but the corpus at origin/main ef21c0416;
 // the four round-1 LogService cutover commits (1,313 insertions / 112
 // deletions across 14 rio-gateway files) sit between the two HEADs; none is
 // a lifecycle FIX/HARDENING commit, so no family, candidate or verdict is
 // affected. (2) minor — F8 coverage attribution corrected to the
-// wire_opcodes upload tests (opcodes_write.rs, incl. the fac58554b
+// wire_opcodes upload tests (opcodes_write.rs, incl. the e4fcefd39
 // regression test) + functional/nar_roundtrip.rs (the golden-conformance
 // suite has no upload tests). (3) minor — Stage-A commit hashes recorded
 // pre-rebase; on the integrated branch they are fd92fb873 / a9f3ee2bc /

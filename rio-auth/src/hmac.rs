@@ -140,7 +140,7 @@ pub struct AssignmentClaims {
     ///   `skip_serializing_if` would emit `"tenant": null`, which is
     ///   *still* an unknown key.)
     ///
-    /// Rolled out in two phases (Option H1). **Phase 1** (`fb096e50f`)
+    /// Rolled out in two phases (Option H1). **Phase 1** (`47abb56fe`)
     /// added the field READ-only: store can parse `tenant`, scheduler
     /// signed `tenant: None`. **Phase 2** (this commit) flips
     /// `dispatch.rs` to set `tenant` from `attributed_tenant`; the
@@ -1040,7 +1040,7 @@ mod tests {
     ///    pre-tenant store CANNOT parse it. This was the hazard that
     ///    gated Phase 2 (`dispatch.rs` setting `tenant` from
     ///    `attributed_tenant`) on the store fleet first carrying the
-    ///    Phase 1 reader (`fb096e50f`); satisfied via a wipe deploy.
+    ///    Phase 1 reader (`47abb56fe`); satisfied via a wipe deploy.
     /// 2. `tenant: None` → `skip_serializing_if = "Option::is_none"`
     ///    omits the key entirely → the wire body is byte-identical to
     ///    the pre-tenant shape → a pre-tenant store parses it fine.
@@ -1079,7 +1079,7 @@ mod tests {
 
         // Half 1 — `tenant: Some(_)` is a wire break against a
         // pre-tenant store. This is why Phase 2 had to wait for the
-        // store fleet to carry the Phase 1 reader (fb096e50f).
+        // store fleet to carry the Phase 1 reader (47abb56fe).
         let mut with_tenant = test_claims(3600);
         with_tenant.tenant = Some("4f8a3c0e-0000-4000-8000-000000000001".into());
         let body = claims_body(&with_tenant);

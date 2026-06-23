@@ -13,10 +13,10 @@
 // structural stand-in for "budget too small for normal congestion".
 //
 // Candidates carried by this file:
-//   - GW-2 (51123b2be)  gwCalibF5ReleaseAfterCloseOut    (V) -> s15
-//   - GW-2 (861888876)  gwCalibF5NoSendBudget            (V) -> l2
+//   - GW-2 (b96f96e00)  gwCalibF5ReleaseAfterCloseOut    (V) -> s15
+//   - GW-2 (489e63150)  gwCalibF5NoSendBudget            (V) -> l2
 //   - GW-2 (§2d T half) gwCalibF5BudgetIgnoresPeerClass  (T) -> p5
-//   - GW-8 (deea04bbc)  gwCalibF5UnwindowedSend          (V) -> s13
+//   - GW-8 (9b12c5a37)  gwCalibF5UnwindowedSend          (V) -> s13
 //
 // Run (serially, from the repo root):
 //   quint verify --backend=tlc --main=<module> --step=calibStep \
@@ -24,7 +24,7 @@
 //     docs/spec/models/calibration/gw-f5-egress.qnt
 
 // =========================================================================
-// CALIBRATION — pre-51123b2be (GW-2, ordering half): the close-out sends
+// CALIBRATION — pre-b96f96e00 (GW-2, ordering half): the close-out sends
 // ran BEFORE the SessionGuard drop, so a peer that parks the handle queue
 // pins the dead session's global permit (and every later one's) until the
 // queue drains. The pre-fix pump exit below enters the close-out with the
@@ -41,22 +41,22 @@
 // Stage-C record):
 // - GW-2 gwCalibF5ReleaseAfterCloseOut (release ordering): FALSIFIES S15 @
 //   9 (5,228/408) — client EOF → proto exits → pre-fix pump exit enters the
-//   close-out with the guard still held (51123b2be: release waited on the
+//   close-out with the guard still held (b96f96e00: release waited on the
 //   peer-parkable handle queue).
 // - GW-2 gwCalibF5NoSendBudget (send budget): FALSIFIES L2 @ 10 (6,600/479)
 //   — a withhold-window peer parks the send with no HANDLE_SEND_TIMEOUT
 //   armed; capacity held toward a transport-withholding peer with nothing
-//   armed (861888876's unbounded handle.data() await).
+//   armed (489e63150's unbounded handle.data() await).
 // - GW-2 gwCalibF5BudgetIgnoresPeerClass (T): FALSIFIES P5 @ 10
 //   (32,253/1,567) — a compliant peer's window runs out and the budget,
 //   stripped of the §2d peer-class condition, fires the wedge response
 //   against it (budgetFiredOnCompliant / fcByBudget — the structural form
 //   of "budget too small for normal congestion", the 5 s close-out budget
-//   861888876 replaced).
+//   489e63150 replaced).
 // - GW-8 gwCalibF5UnwindowedSend: FALSIFIES S13 @ 7 (922/117) — the first
 //   response send goes through the pre-fix non-window path (Handle::data);
 //   russh-side pending occupancy above zero with no credit consumed
-//   (deea04bbc). L2 deliberately does not fall here (pre-fix sends complete
+//   (9b12c5a37). L2 deliberately does not fall here (pre-fix sends complete
 //   instantly into the unbounded buffer), exactly as the §3.4 row predicts.
 // - BASELINE: gwCalibF5AsBuilt (GW-2 V+T, GW-8) 66,059 distinct / 44 s —
 //   HOLDS; reachability-equivalent to famWedge (66,059 — exact structural
@@ -144,7 +144,7 @@ module gwCalibF5ReleaseAfterCloseOut {
 }
 
 // =========================================================================
-// CALIBRATION — pre-861888876 (GW-2, budget half): the response pump did
+// CALIBRATION — pre-489e63150 (GW-2, budget half): the response pump did
 // an UNBOUNDED handle.data() await while owning the SessionGuard — a peer
 // that stops draining wedges every pump on the connection and pins
 // permits/gauge/live-count with nothing armed to break the wait.
@@ -220,7 +220,7 @@ module gwCalibF5NoSendBudget {
 
 // =========================================================================
 // CALIBRATION — GW-2 trace-admission (T) half, per design §2d/§5: the
-// over-tight pre-861888876 budget shape ("5 s close-out budget abandoned
+// over-tight pre-489e63150 budget shape ("5 s close-out budget abandoned
 // close-outs under normal congestion, stranding clients"), re-introduced
 // structurally by REMOVING the peer-class enabling condition from the
 // send/close-out budget fire actions — the budget may fire against a
@@ -318,7 +318,7 @@ module gwCalibF5BudgetIgnoresPeerClass {
 }
 
 // =========================================================================
-// CALIBRATION — pre-deea04bbc (GW-8): session output was sent via
+// CALIBRATION — pre-9b12c5a37 (GW-8): session output was sent via
 // Handle::data, which does no SSH window accounting — a client that
 // withholds CHANNEL_WINDOW_ADJUST (TCP and keepalives healthy) absorbs the
 // whole response stream into russh's unbounded per-channel pending buffer

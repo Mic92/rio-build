@@ -610,7 +610,7 @@ mod tests {
                 prev_a: [c_spot.clone()].into(),
             },
             "Feasible-all-masked at |pool|=1 → Miss.pin.prev_a = fresh \
-             m.a.cells={{spot}}. bug_001 @ 36804895: `_ =>` dropped m; \
+             m.a.cells={{spot}}. bug_001 @ 14b2eea9: `_ =>` dropped m; \
              Miss carried only `next`."
         );
         assert_eq!(p, out.pin(), ".pin() helper agrees with arm field");

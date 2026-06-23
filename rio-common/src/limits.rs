@@ -43,7 +43,7 @@ pub const MAX_SIGNATURES: usize = 100;
 /// chain; real closures (full nixpkgs stdenv ~5k, full system ~20k)
 /// are well under this. (The founding consumer — the scheduler's
 /// `spawn_substitute_fetches` BFS — was deleted with the stream-era
-/// substitution machinery in 9d82fc712; the constant survives as the
+/// substitution machinery in 9168f1174; the constant survives as the
 /// shared cap. bughunt-13 F14's rot sweep.)
 pub const MAX_SUBSTITUTE_CLOSURE: usize = 50_000;
 

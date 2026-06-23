@@ -142,7 +142,7 @@ function assertNever(x: never): never {
 }
 
 /** THE latch transition law (merged_bug_081): one total function over
- * the `latched x evidence` product. fd135a0ab typed the latch arm's
+ * the `latched x evidence` product. 91539d92b typed the latch arm's
  * guards but shipped the inverse edge bare (`!settled && allTerminal`)
  * — an empty response un-latched a settled drawer into absorbing 5s
  * polling (re-latching needs a NONEMPTY untruncated all-terminal

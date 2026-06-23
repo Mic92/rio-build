@@ -267,7 +267,7 @@ pod-attributed grammars, the doc claimed "the two grammars are
 kubelet's own", and the fixtures were derived from the
 implementation's own needles --- structurally unable to detect the
 enumeration miss (the same class had already bitten pre-campaign:
-2acd1b32's string mismatch). The miss is LATENT for the current
+1c4422c0's string mismatch). The miss is LATENT for the current
 single-container requests==limits builder pod (kubelet checks
 emptyDir → pod → container in order, so the pod-aggregate lane fires
 first) and arms the moment a sidecar lands. The wire letter is
@@ -1738,7 +1738,7 @@ The reconciler is KEPT. Governed-population census at the wave-14
 base (#raw("[GEN-SET]"): `rg -n 'kind:\s*ComponentScaler' infra/helm/`):
 zero CR instances --- the only match is the CRD definition
 (`infra/helm/crds/componentscalers.rio.build.yaml:9`). Gateway and
-store scaling are KEDA-owned as of wave-13: `c9a9d163e` replaced the
+store scaling are KEDA-owned as of wave-13: `861000c16` replaced the
 store ComponentScaler CR with `templates/store-scaledobject.yaml`;
 `templates/gateway-scaledobject.yaml` owns the gateway replica
 count. The reconciler code, the CRD, and the rules in this section

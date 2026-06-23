@@ -6878,7 +6878,7 @@ async fn e3a_compute_bound_jumps_floor_cores_to_provisionable_max() -> TestResul
 /// **sh-045 red-first (c) — THE ONE TRUE BASE-RED ANCHOR.** *Proposition:
 /// a worker-reported `Infra(DiskFull)` close with cpu_util ≥ threshold
 /// jumps `floor.cores` to the partition-aware provisionable max.* RED at
-/// `fd861de43`: the now-retired cores-axis predicate was
+/// `704c048b5`: the now-retired cores-axis predicate was
 /// `matches!(ExecutorVariant|WorkerAbort)` — `Infra(_)` excluded — so
 /// the cores arm short-circuited and `floor.cores` stayed 0. The
 /// worker-reported `Infra(*)` lane already CARRIES `cpu_seconds_total` at
@@ -6932,7 +6932,7 @@ async fn infra_diskfull_cpu_saturated_jumps_cores() -> TestResult {
     assert_eq!(
         s.sched.resource_floor.cores, 16,
         "Infra(DiskFull) is not derivation-intrinsic: cpu_util=0.85 jumps \
-         floor.cores to the partition-aware prov_max (RED at fd861de43: 0 — \
+         floor.cores to the partition-aware prov_max (RED at 704c048b5: 0 — \
          the cores-axis predicate excluded Infra(_))"
     );
     assert!(

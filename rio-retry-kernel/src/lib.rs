@@ -85,7 +85,7 @@
 //!   `apply` step); it stays because `sched.retry.transient-budget`'s
 //!   final clause mandates it and non-distinct/dev configurations still
 //!   reach it.
-//! - **P4 (floor-promotion exemption, the c13f6a277 / I-213 class):**
+//! - **P4 (floor-promotion exemption, the dc3470831 / I-213 class):**
 //!   the exemption is infra-class only. [`classify`] maps a
 //!   worker-reported infra failure with `floor_outcome.promoted` or a
 //!   CONCURRENT_PUTPATH message — and a promoted controller

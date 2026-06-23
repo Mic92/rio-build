@@ -12,7 +12,7 @@
 //
 // Stage-C calibration override, closure-evidence family F13
 // (probe-coverage completeness; corpus rep CE-58, the
-// 6058cafcd / 398d0ed9e / 75ca91224 / d6e4cf5c4 group — whole classes
+// 1857c76ca / 19370c98d / 5686fe6df / c3b8ab508 group — whole classes
 // of nodes never received a substitutability verdict before being
 // handed to a builder, so cached paths were compiled from source).
 // Crosswalk row: closure-evidence-formal-design.md §4 "F13 CE-58 → ENC

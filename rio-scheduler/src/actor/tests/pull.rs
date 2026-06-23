@@ -2249,7 +2249,7 @@ async fn confirm_only_pull_never_mints() -> TestResult {
 
 /// live_040: `WorkAssignment.assigned_{cores,mem,disk}` were
 /// permanently None in production — the only `last_intent` writer was
-/// deleted with the stream placement/dispatch layer (20ddb2230), so
+/// deleted with the stream placement/dispatch layer (624e87aea), so
 /// the D4 OOM floor doubled from base 0 (structurally dead), §13b
 /// spawn-ahead read no ETA, SLA misprediction scoring never moved,
 /// `cpu_limit_cores` collapsed to cgroup-only, and the builder banner
@@ -2727,7 +2727,7 @@ async fn refit_down_stamp_carries_the_dispatched_deadline() -> TestResult {
 /// `db.max_known_generation()` PG round-trip. iter1 measured 149k
 /// floor reads (41% of actor busy time) at 22/s; the floor moves at
 /// most once per leader transition, so a per-pull read is pure waste.
-/// RED at 7d960f37: every pull reads PG — 10 pulls → 10 reads. After
+/// RED at a63e186f: every pull reads PG — 10 pulls → 10 reads. After
 /// the cache (refreshed at LeaderAcquired + Tick head) the same 10
 /// pulls drive ≤2 reads (init + at most one tick).
 #[tokio::test]

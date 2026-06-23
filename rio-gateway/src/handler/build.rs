@@ -2011,8 +2011,8 @@ pub const SUBMIT_RETRIES: u32 = 4;
 ///
 /// Sized for the deposed-believer fence window (≤ ~5s): 4 retries at
 /// 0.5/1/2/4s = 7.5s. The 89s sustained cost-axis backpressure hold
-/// that motivated 72cf3a359's 8-retry/~79.5s widen is structurally
-/// eliminated by the Tick/flush-only EWMA feed (af4785ef0) + the P2
+/// that motivated 1a0656269's 8-retry/~79.5s widen is structurally
+/// eliminated by the Tick/flush-only EWMA feed (98e4b7596) + the P2
 /// phase-5 coalesce — the scheduler's own doc claims the gate "reverts
 /// to a
 /// never-engages safety valve". Per the structural>retry>widen
@@ -4173,7 +4173,7 @@ mod tests {
     /// child ONLY — the `actSubstitute` parent is structural (stock
     /// convention: `substitution-goal.cc` never emits `resProgress` on
     /// the substitute activity; the bytes belong to the
-    /// `copyStorePath` child). The both-aids emission (42ebd60a9) fed
+    /// `copyStorePath` child). The both-aids emission (e5f1e46d8) fed
     /// direction-aware consumers — which dedup nested copies by
     /// `(path, host)` — two rows per path: the parent's empty
     /// substituter URI parses as Localhost and never matches the

@@ -1591,7 +1591,7 @@ module retryPolicy {
   /// derivation transitions to Completed.
   // The dead spawn_substitute pointer (bughunt-13 F14, the audit's
   // exhibit 1): dispatch.rs::spawn_substitute was deleted whole in
-  // 9d82fc712 with the stream-era substitution machinery; the live
+  // 9168f1174 with the stream-era substitution machinery; the live
   // lane is the merge-time cached-hit application, whose Poisoned arm
   // appends exactly this reset row.
   // Mirrors: rio-scheduler/src/actor/merge.rs:apply_cached_hits

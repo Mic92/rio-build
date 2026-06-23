@@ -16,8 +16,8 @@
 # compiled the instrumented binary.
 #
 # Do NOT add -Z coverage-options=branch to RUSTFLAGS — llvm-cov export
-# segfaults at ~15GB RSS with 20+ object files (tried 8126dcf, reverted
-# 4c8365d, diagnostic in 395c049).
+# segfaults at ~15GB RSS with 20+ object files (tried 61002c2, reverted
+# 081dede, diagnostic in f4ec63c).
 {
   pkgs,
   rustStable,

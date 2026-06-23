@@ -117,7 +117,7 @@ def assert_metric_ge(node, port, name, floor, labels=""):
 
 # ── Set equality with symmetric-diff failure messages ───────────────
 # For willBuild/willSubstitute/references — the `wopQueryMissing`
-# bug (`5786f82`) was masked by a test using `.contains()` instead
+# bug (`79d6dfc`) was masked by a test using `.contains()` instead
 # of set equality. Extra elements ARE the bug.
 
 def assert_set_eq(actual, expected, context=""):

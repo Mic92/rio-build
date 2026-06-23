@@ -4468,7 +4468,7 @@ mod tests {
     /// `Unauthenticated, Unauthenticated, Ok(())` returns `true` in
     /// exactly 3 attempts (the auth refusals judge the presentation;
     /// the NEXT request's freshly minted service token may verify).
-    /// TRUE RED at 83e596f0c: `left: (false, 1) / right: (true, 3)` —
+    /// TRUE RED at 8f6e71592: `left: (false, 1) / right: (true, 3)` —
     /// the pre-fix is_fatal_rejection gave up after ONE attempt and
     /// the establishment sweep then closed the healthy Success as a
     /// charged materialization_infra. Certifies: the

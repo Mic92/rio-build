@@ -3734,7 +3734,7 @@ mod tests {
     /// pair refreshes docs/gen + the helm metric-help surface).
     #[test]
     fn reap_disposition_help_alphabet_is_total() {
-        // Embedded at compile time (the b870121ac form) — no runtime
+        // Embedded at compile time (the f0a73b87a form) — no runtime
         // tree dependence, so the pin holds in the gate sandbox too.
         let src = include_str!("../../lib.rs");
         let start = src

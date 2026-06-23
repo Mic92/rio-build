@@ -205,7 +205,7 @@ pkgs.testers.runNixOSTest {
         stub = node.succeed("cat /run/systemd/resolve/stub-resolv.conf")
         assert "127.0.0.53" in stub, f"stub no longer loopback (precondition changed):\n{stub}"
 
-    # bug_364 + 868c291e regression: 80-rio-mac-none had
+    # bug_364 + 0365e583 regression: 80-rio-mac-none had
     # OriginalName="*", which won the lexical sort for EVERY interface
     # including the primary ENI. systemd.link(5): exactly one .link
     # file applies; 80-rio-mac-none sets only MACAddressPolicy, so it

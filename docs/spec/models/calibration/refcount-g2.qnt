@@ -8,14 +8,14 @@
 // Same extend-and-override pattern as refcount-g1.qnt.
 //
 // Family disposition of the commits NOT carried by an override module:
-//   - `e5bdbff1b` (I-040) — ENC, refcountCalibG2ReapInlineOnly below.
-//   - `dbb42232a` — ENC-A: the same inline-only-delete shape at a
+//   - `ef3ceb2bd` (I-040) — ENC, refcountCalibG2ReapInlineOnly below.
+//   - `95f966e78` — ENC-A: the same inline-only-delete shape at a
 //     different call site (abort_upload, the batch drop path); the
 //     model's writers funnel every owner-side cleanup through the same
-//     reap/rollback actions, so the e5bdbff1b override is the same
+//     reap/rollback actions, so the ef3ceb2bd override is the same
 //     revert at model resolution.
-//   - `adfd303d7` C2 — ENC, refcountCalibG2SweepCollapsedCount below.
-//   - `d617bf3e5` — split: the M_023 CHECK half is a passive schema
+//   - `90c739c74` C2 — ENC, refcountCalibG2SweepCollapsedCount below.
+//   - `c89240bf8` — split: the M_023 CHECK half is a passive schema
 //     constraint whose model image (m023NonNegative) is an invariant in
 //     every regime, not a mechanism an override can revert — the
 //     under-count class it detects is demonstrated by the G1 pre-token
@@ -25,12 +25,12 @@
 //     pre-registered treatment as the 15-minute/hourly cadences —
 //     coverage stays with the sweep unit tests and the wired
 //     orphan-sweep witnesses).
-//   - `8d93ce6c1` — SUBSUMED: the chunk_tenants junction it cleaned up
+//   - `0d13688ef` — SUBSUMED: the chunk_tenants junction it cleaned up
 //     was dropped by migration 035; the subject no longer exists in the
 //     tree.
 
 // =========================================================================
-// CALIBRATION — pre-e5bdbff1b (I-040): the owner-side reap uses the
+// CALIBRATION — pre-ef3ceb2bd (I-040): the owner-side reap uses the
 // inline-only delete — the placeholder's manifest rows are deleted but
 // its chunk accounting is never touched (no chunk_list parse, no
 // decrement, no zero-detect, no enqueue). The historical harm: the
@@ -48,16 +48,16 @@
 // VERDICT ROWS (Stage-C, relocated from the retired refcount invariant
 // map; full table with the NOT-ENC/SUBS dispositions:
 // docs/spec/models/refcount-records.md):
-// - refcountCalibG2ReapInlineOnly (e5bdbff1b / I-040, ENC): FALSIFIES
+// - refcountCalibG2ReapInlineOnly (ef3ceb2bd / I-040, ENC): FALSIFIES
 //   cr3CounterRefinesFold and cr2NoStrandedGarbage @ calibStep (depth 4,
 //   25/20). Baseline (as-built step, same one-uploader restriction):
 //   HOLDS both (1,072/398).
-// - refcountCalibG2SweepCollapsedCount (adfd303d7 C2, ENC): FALSIFIES
+// - refcountCalibG2SweepCollapsedCount (90c739c74 C2, ENC): FALSIFIES
 //   cr3CounterRefinesFold and cr2NoStrandedGarbage @ calibStep (depth
 //   11, 3,348,835/146,119) — the by-count clause of
 //   store.chunk.refcount-decrement exercised end-to-end. Baseline:
 //   contend-regime constants verbatim (Stage-B exhaustive HOLDS).
-// - ENC-A by analogy: dbb42232a covered by refcountCalibG2ReapInlineOnly
+// - ENC-A by analogy: 95f966e78 covered by refcountCalibG2ReapInlineOnly
 //   (the model's writers funnel every owner-side cleanup through the
 //   same reap action).
 module refcountCalibG2ReapInlineOnly {
@@ -129,7 +129,7 @@ module refcountCalibG2ReapInlineOnly {
 }
 
 // =========================================================================
-// CALIBRATION — pre-adfd303d7 C2: the path-GC sweep batch decrements
+// CALIBRATION — pre-90c739c74 C2: the path-GC sweep batch decrements
 // each referenced hash by AT MOST ONE per batch instead of by the number
 // of dying manifests that reference it — a chunk shared by N swept paths
 // loses one reference, not N. The historical harm: shared chunks stuck

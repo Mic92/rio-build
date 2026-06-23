@@ -15,10 +15,10 @@
 // constants and must HOLD the same property.
 //
 // Candidates carried by this file:
-//   - GW-1  (443670d43)  gwCalibF1ServerSideKeepsGuard      -> l2SendSettleArmed
-//   - GW-12 (a2fcb8aa0)  gwCalibF1AuthRejectSkipsGate       -> s1ConnPermitConservation
-//   - GW-18 (9d80038cb)  gwCalibF1NoGlobalSessionCap   (V)  -> s2SessionPermitConservation
-//   - GW-18 (9d80038cb)  gwCalibF1PerConnCapRefusals   (T)  -> p1 / p2 / p3
+//   - GW-1  (96d127a76)  gwCalibF1ServerSideKeepsGuard      -> l2SendSettleArmed
+//   - GW-12 (90c819bb6)  gwCalibF1AuthRejectSkipsGate       -> s1ConnPermitConservation
+//   - GW-18 (d7db4f4b6)  gwCalibF1NoGlobalSessionCap   (V)  -> s2SessionPermitConservation
+//   - GW-18 (d7db4f4b6)  gwCalibF1PerConnCapRefusals   (T)  -> p1 / p2 / p3
 //
 // Run (serially, from the repo root):
 //   quint verify --backend=tlc --main=<module> --step=calibStep \
@@ -26,7 +26,7 @@
 //     docs/spec/models/calibration/gw-f1-capacity.qnt
 
 // =========================================================================
-// CALIBRATION — pre-443670d43 (GW-1): the session permit / gauge / grace
+// CALIBRATION — pre-96d127a76 (GW-1): the session permit / gauge / grace
 // were keyed on the per-connection `sessions` map entry, which only CLIENT
 // action (channel close) removes. A protocol session that ends server-side
 // (handshake timeout, idle timeout, protocol error) keeps its permit and
@@ -57,21 +57,21 @@
 //   crosswalk contradiction). Trace: accept → auth → exec → handshake
 //   timeout (server-side ending) → pre-fix pump exit keeps the guard →
 //   close-out completes → capacity held with no budget, no enforceable
-//   force-close, no pump exit left (the 443670d43 exec-then-silent shape).
+//   force-close, no pump exit left (the 96d127a76 exec-then-silent shape).
 // - GW-12 gwCalibF1AuthRejectSkipsGate (MAX_CONNECTIONS = 1): FALSIFIES S1
 //   @ 4 (297/56). Trace: a reject-only auth callback skips
 //   mark_real_connection / ensure_permit — a live connection past the auth
-//   layer neither counted nor being torn down (a2fcb8aa0); the permit-less-
+//   layer neither counted nor being torn down (90c819bb6); the permit-less-
 //   not-torn-down half violates the same invariant's other conjunct deeper
 //   in the same module.
 // - GW-18 gwCalibF1NoGlobalSessionCap (V): FALSIFIES S2 @ 13
 //   (159,819/8,164) — sessions spread across both connections exceed
-//   MAX_SESSIONS at the third concurrent guard (9d80038cb safety half).
+//   MAX_SESSIONS at the third concurrent guard (d7db4f4b6 safety half).
 // - GW-18 gwCalibF1PerConnCapRefusals (T): FALSIFIES P1 @ 8 (6,538/556), P2
 //   @ 7 (471/56), P3 @ 7 (466/53) — the per-connection-cap world refuses a
 //   second exec below the global cap, refuses the channel open itself, and
 //   disconnects the connection the instant its session count touches zero
-//   (9d80038cb permissiveness half).
+//   (d7db4f4b6 permissiveness half).
 // - BASELINES (as-built baselineStep, exhaustive, HOLDS allInvariants at
 //   scope): gwCalibF1AsBuilt (GW-1) 12,107,117 distinct / 480 s;
 //   gwCalibF1AsBuiltSpread (GW-18 V+T) 199,002 / 34 s; gwCalibF1AsBuiltCap1
@@ -143,7 +143,7 @@ module gwCalibF1ServerSideKeepsGuard {
 }
 
 // =========================================================================
-// CALIBRATION — pre-a2fcb8aa0 (GW-12): auth_publickey_offered skipped
+// CALIBRATION — pre-90c819bb6 (GW-12): auth_publickey_offered skipped
 // mark_real_connection / ensure_permit on the reject path. A client that
 // skips the `none` probe and offers only unauthorized keys reaches the
 // auth layer uncounted and, when over cap, is never torn down — the
@@ -209,7 +209,7 @@ module gwCalibF1AuthRejectSkipsGate {
 }
 
 // =========================================================================
-// CALIBRATION — pre-9d80038cb, safety half (GW-18 V): the capacity bound
+// CALIBRATION — pre-d7db4f4b6, safety half (GW-18 V): the capacity bound
 // was per-connection only; nothing bounded the TOTAL number of live
 // protocol sessions across connections, so an attacker spreading sessions
 // over many connections was unbounded. The pre-fix exec admission below
@@ -285,7 +285,7 @@ module gwCalibF1NoGlobalSessionCap {
 }
 
 // =========================================================================
-// CALIBRATION — pre-9d80038cb, permissiveness half (GW-18 T): the
+// CALIBRATION — pre-d7db4f4b6, permissiveness half (GW-18 T): the
 // over-tight guards the fix removed, re-introduced. Three arms of the same
 // pre-fix design at model scale (per-connection cap of 1):
 //   - an exec on a connection that already has a live session is refused

@@ -3,7 +3,7 @@
 // Consumed by book.typ (HTML routing), book-pdf.typ (include order),
 // lib/html/nav.typ (sidebar), and lib/rio.typ (cross-link resolution).
 
-#let repo-edit-base = "https://github.com/lovesegfault/rio-build/edit/main/docs/"
+#let repo-edit-base = "https://github.com/anthropics/rio/edit/main/docs/"
 
 // (title, path, children) — path is relative to docs/, children is an
 // array of the same shape. A `path: none` node is a section heading

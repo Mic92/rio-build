@@ -34,19 +34,19 @@
 //
 // Family disposition of the commits NOT carried by an override module
 // (one line each; the full table is in the invariant map):
-//   - `bf7e516e4` C1  — ENC, refcountCalibG1ReapPathMatched below.
-//   - `937a9c928` (completion half) — ENC,
+//   - `21599e89c` C1  — ENC, refcountCalibG1ReapPathMatched below.
+//   - `3cf0b77b6` (completion half) — ENC,
 //     refcountCalibG1CompletionUnclaimGated below.
-//   - `937a9c928` (heartbeat half) — NOT-ENCODED: the foreign-freshen
+//   - `3cf0b77b6` (heartbeat half) — NOT-ENCODED: the foreign-freshen
 //     harm is an eventuality (an abandoned row kept artificially fresh is
 //     reaped later, not corrupted), outside this safety model; the
 //     ownership content is the same claim-gate discipline the completion
 //     half demonstrates, and the main model's l3NoForeignFreshen guards
 //     the as-built admission predicate.
-//   - `1cd975b90` — ENC, refcountCalibG1RollbackPreToken below.
-//   - `ae5f3190b` — NOT-ENCODED (input validation; pre-registered
+//   - `485c04453` — ENC, refcountCalibG1RollbackPreToken below.
+//   - `b143f9fbe` — NOT-ENCODED (input validation; pre-registered
 //     per-commit exception, design §3.4).
-//   - `31bd9c512`, `539c2be7c`, `31ce52b14` — ENC-A: the harm class (a
+//   - `3b4fa8b66`, `d3ba4a89c`, `57e1b0828` — ENC-A: the harm class (a
 //     reaper acting on a stale view of staleness/status/chunk_list
 //     double-decrements or reaps a fresh row) is the same
 //     stale-credential shape the two overrides below falsify; the
@@ -55,7 +55,7 @@
 //     model's one-action-per-SQL-transaction granularity.
 
 // =========================================================================
-// CALIBRATION — pre-1cd975b90: the in-process rollback decrement (DEC-1)
+// CALIBRATION — pre-485c04453: the in-process rollback decrement (DEC-1)
 // carries no PlaceholderToken and takes no FOR UPDATE ownership lock —
 // it deletes whatever 'uploading' row the path currently has and
 // decrements the roller-back's OWN written hash set against it,
@@ -74,14 +74,14 @@
 // VERDICT ROWS (Stage-C, relocated from the retired refcount invariant
 // map; full table with the NOT-ENC/SUBS dispositions:
 // docs/spec/models/refcount-records.md):
-// - refcountCalibG1RollbackPreToken (1cd975b90, ENC): FALSIFIES
+// - refcountCalibG1RollbackPreToken (485c04453, ENC): FALSIFIES
 //   cr3CounterRefinesFold and m023NonNegative @ calibStep (depth 8,
 //   208,974/12,056) — the late rollback erases the successor's
 //   placeholder and re-decrements an already-reclaimed reference below
 //   zero; incident shape pinned by g1PreTokenDoubleDecrementRun.
 //   Baseline: contend-regime constants verbatim (Stage-B exhaustive
 //   HOLDS).
-// - refcountCalibG1CompletionUnclaimGated (937a9c928 completion half,
+// - refcountCalibG1CompletionUnclaimGated (3cf0b77b6 completion half,
 //   ENC): FALSIFIES local completionRequiresCurrentOwner @ calibStep
 //   (depth 9, 53,278/5,798) and cr1NoLiveChunkCollected @ calibStep
 //   (depth 10, 142,842/15,174). Baselines over the same relaxed-clock
@@ -90,15 +90,15 @@
 //   claim gate; CR-1 does NOT hold on that baseline (depth 13,
 //   2,458,154/187,657) via the independent late-mark window, so the CR-1
 //   run is supporting evidence, not the attribution.
-// - refcountCalibG1ReapPathMatched (bf7e516e4 C1, ENC): FALSIFIES
+// - refcountCalibG1ReapPathMatched (21599e89c C1, ENC): FALSIFIES
 //   cr4PresenceFromConfirmedUpload @ calibStep (depth 11, 17,722/6,084)
 //   — the foreign reap soft-deletes and enqueues the successor's chunk;
 //   presence commits on the soft-deleted row and the drain removes the
 //   just-uploaded object. Baseline (as-built step, same restriction):
 //   HOLDS (185,649/35,161).
-// - ENC-A by analogy: 31bd9c512 and 539c2be7c covered by
+// - ENC-A by analogy: 3b4fa8b66 and d3ba4a89c covered by
 //   refcountCalibG1ReapPathMatched (a reap admitted against a row that
-//   changed under it); 31ce52b14 covered by
+//   changed under it); 57e1b0828 covered by
 //   refcountCalibG1RollbackPreToken (a decrement justified by a stale
 //   view, double-charging a generation).
 module refcountCalibG1RollbackPreToken {
@@ -207,13 +207,13 @@ module refcountCalibG1RollbackPreToken {
 }
 
 // =========================================================================
-// CALIBRATION — pre-937a9c928 (completion half): completion is not
+// CALIBRATION — pre-3cf0b77b6 (completion half): completion is not
 // claim-gated — `complete_manifest_in_conn` flips whatever 'uploading'
 // row the path has, so a stale uploader that resumes after its
 // placeholder was reaped and re-claimed flips the SUCCESSOR's in-flight
 // placeholder to 'complete'. Reaching that state also needs an owner
 // that misses heartbeats while alive (at that point in history the
-// heartbeat was progress-driven only — a1b49b4a3 — so a stalled PUT
+// heartbeat was progress-driven only — 66613b03f — so a stalled PUT
 // fan-out heartbeated nothing), encoded as the contract-free clock
 // below; the claim gate is the mechanism under test, the baselineStep
 // keeps the same clock with the as-built gate.
@@ -383,7 +383,7 @@ module refcountCalibG1CompletionUnclaimGated {
 }
 
 // =========================================================================
-// CALIBRATION — pre-bf7e516e4 C1 (claim_id / ReapBy::Claim): the
+// CALIBRATION — pre-21599e89c C1 (claim_id / ReapBy::Claim): the
 // owner-side reap (drop-guard, abort, complete-failure cleanup) matches
 // on the path alone — whatever 'uploading' row the path currently has is
 // reaped, not the generation the credential was minted for. The

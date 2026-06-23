@@ -1,4 +1,4 @@
-# bug_015 (the §SCC(2)/(3) cross-tier sweep miss): commit 2329652
+# bug_015 (the §SCC(2)/(3) cross-tier sweep miss): commit 51e1cc8
 # stamped every store pod `karpenter.sh/do-not-disrupt: "true"` while
 # the rio-store NodePool kept `WhenEmptyOrUnderutilized` — Underutilized
 # was structurally dead (one do-not-disrupt pod per node, tainted

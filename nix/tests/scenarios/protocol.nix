@@ -1,7 +1,7 @@
 # Protocol scenario: real nix client against rio gateway, cold or warm store.
 #
 # The `cold=true` variant is the regression test for 3 of the 4 bugs from
-# 5786f82 ("smoke test has never passed on a cold store"):
+# 79d6dfc ("smoke test has never passed on a cold store"):
 #
 #   wopQueryMissing `!out` — assert_set_eq on willBuild catches the extra
 #     DerivedPath suffix; the old unit test used .contains() which masked it.
@@ -77,7 +77,7 @@ let
         f"nix copy --no-check-sigs --derivation --to '{store_url}' {drv}"
     )
 
-    with subtest("cold build from empty store (catches 3/4 5786f82 bugs)"):
+    with subtest("cold build from empty store (catches 3/4 79d6dfc bugs)"):
         # wopQueryMissing fires INSIDE nix build (precursor to dispatch),
         # not as a separately-observable dry-run. All three bugs manifest
         # as build failures:

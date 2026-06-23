@@ -1,7 +1,7 @@
 // -*- mode: Bluespec; -*-
 //
 // Stage-C calibration override, closure-evidence family F4, prune
-// demand-set completeness (corpus rep CE-66, 85213119d — an explicitly
+// demand-set completeness (corpus rep CE-66, c527cc08b — an explicitly
 // requested target inside another target's closure was not a structural
 // root, so the prune dropped it entirely: never merged, classified,
 // substituted or dispatched). Crosswalk row:

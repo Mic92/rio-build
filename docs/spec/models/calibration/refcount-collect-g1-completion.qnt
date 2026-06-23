@@ -1,6 +1,6 @@
 // -*- mode: Bluespec; -*-
 //
-// Acceptance re-run, the `937a9c928` completion-clobber member, against
+// Acceptance re-run, the `3cf0b77b6` completion-clobber member, against
 // the REPLACEMENT model (refcount-formal plan T-1a.6; the member the
 // Stage-C Phase-1 input list added to the design's G4a/G5 re-run set):
 // completion not claim-gated, re-pointed from the as-built model
@@ -73,7 +73,7 @@ module refcountCollectG1CompletionUnclaimGated {
 
   /// PRE-FIX completion: admitted by row existence alone (status =
   /// 'uploading'), no claim_id filter — `complete_manifest_in_conn`
-  /// before 937a9c928.
+  /// before 3cf0b77b6.
   action completeManifestUnclaimGated(u: int): bool = {
     val p = ups.get(u).path
     all {

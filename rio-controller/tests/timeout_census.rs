@@ -47,7 +47,7 @@
 //!   pin, not an axis).
 
 //!
-//! Sandbox form (the S1/b870121ac embed precedent — hazard (vvvvv) in
+//! Sandbox form (the S1/f0a73b87a embed precedent — hazard (vvvvv) in
 //! its in-crate face): the nix gate runs test binaries WITHOUT the
 //! source tree on disk and with the COMPILE-TIME `env!` manifest path
 //! pointing at a build dir that no longer exists, so a runtime walk is
@@ -607,7 +607,7 @@ fn corpus_cfgtest_green_excluded() {
     );
 }
 
-/// The S1/b870121ac completeness pin: the embedded universe equals the
+/// The S1/f0a73b87a completeness pin: the embedded universe equals the
 /// live tree in BOTH directions — a new/removed/renamed src file or
 /// corpus plant fails this on every dev run until the tables are
 /// regenerated, so the census quantifier domain stays

@@ -7,7 +7,7 @@ description: Bump flake inputs in lockstep. rio-build has no reference submodule
 
 ```bash
 nix flake update nixpkgs
-nix flake update tracey-src  # tracey source is a flake input (IFD-free since c1d6a05)
+nix flake update tracey-src  # tracey source is a flake input (IFD-free since 3095c39)
 git add flake.lock
 ```
 

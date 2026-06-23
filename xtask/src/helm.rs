@@ -164,7 +164,7 @@ impl Helm {
     /// `--set-string` — bypasses helm's strvals type coercion. Use for any
     /// value that is *semantically* a string but may *lexically* match
     /// another YAML scalar: git SHAs (all-digit → int64), AWS account IDs,
-    /// commit-ish tags, anything a user types. `--set foo=591224927664`
+    /// commit-ish tags, anything a user types. `--set foo=2d8ab61b66f5`
     /// arrives at the template as int64; `printf "%s"` then renders Go's
     /// `%!s(int64=…)` error sentinel into the manifest.
     pub fn set_string(mut self, key: impl Into<String>, val: impl Into<String>) -> Self {

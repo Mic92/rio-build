@@ -10,7 +10,7 @@
 //     --invariant=<predicted> docs/spec/models/calibration/controller-m2.qnt
 
 // =========================================================================
-// CALIBRATION — pre-08d49c52c, bug_012 half: consolidate_only ran the
+// CALIBRATION — pre-b6c3c4a59, bug_012 half: consolidate_only ran the
 // idle/unhealthy reaps but never pruned inflight_created against the
 // tick's live set, so a claim the controller itself reaped on the
 // consolidate-only path was misread by the next reachable tick's
@@ -74,7 +74,7 @@ module m2CalibNoConsolidatePrune {
       val lostSamples = CLAIMS.filter(k => obsReg.get(k)._4).size() > 0
       val stuckReaped = CLAIMS.filter(k =>
         afterObs.get(k).phase == CInFlight and afterObs.get(k).stuck)
-      // PRE-FIX (08d49c52c): no detect_vanished pass and no prune in
+      // PRE-FIX (b6c3c4a59): no detect_vanished pass and no prune in
       // consolidate-only mode.
       val idleReaped = CLAIMS.filter(k =>
         val c = afterObs.get(k)
@@ -165,7 +165,7 @@ module m2CalibNoConsolidatePrune {
 }
 
 // =========================================================================
-// CALIBRATION — pre-08d49c52c, bug_020 half (the r40 KEEP arm):
+// CALIBRATION — pre-b6c3c4a59, bug_020 half (the r40 KEEP arm):
 // detect_vanished pruned every inflight_created entry on its FIRST
 // appearance in the live LIST, regardless of registered/terminating
 // state. A claim observed in-flight at ~10 s and Karpenter-GC'd at
@@ -309,7 +309,7 @@ module m2CalibInflightDropOnSight {
             inflightCell: "cellB", everRegistered: false,
             pIdle: INotTracked, ctrlReaped: false,
             tomb: false, tombAge: 0, ourCommit: false }
-        // PRE-FIX (08d49c52c bug_020): every entry whose claim appears in
+        // PRE-FIX (b6c3c4a59 bug_020): every entry whose claim appears in
         // the live LIST is pruned on first sight — in-flight ones too.
         else if (c.inflightTracked and c.phase != CAbsent)
           { ...c, inflightTracked: false }

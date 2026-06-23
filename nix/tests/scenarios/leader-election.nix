@@ -1,6 +1,6 @@
 # Leader-election scenario: stable leadership, failover, build-survives-failover.
 #
-# THE test catching cdb70c2 (observed-record tracks resourceVersion, not
+# THE test catching e5f9427 (observed-record tracks resourceVersion, not
 # (holder, transitions)). Pre-fix, the standby watched (holderIdentity,
 # leaseTransitions) for change. But renew only touches renewTime — holder
 # and tx stay fixed. So a leader renewing every 5s looked identical to a
@@ -182,7 +182,7 @@ let
 
     stable-leadership = ''
       # ══════════════════════════════════════════════════════════════════
-      # stable-leadership — THE cdb70c2 assertion
+      # stable-leadership — THE e5f9427 assertion
       # ══════════════════════════════════════════════════════════════════
       # Pre-fix: flip-flop every ~35s → over 60s, leaseTransitions climbs
       # by at least 1 (likely 2-3). Post-fix: rv bumps on every renew →
@@ -208,7 +208,7 @@ let
               f"leaseTransitions changed during 60s stable window: "
               f"{tx_before} → {tx_after} (delta={tx_after - tx_before}). "
               f"Holder: {holder_before} → {holder_after}. "
-              f"This is the cdb70c2 flip-flop: standby stole a live lease "
+              f"This is the e5f9427 flip-flop: standby stole a live lease "
               f"because its observed-record didn't reset on renew."
           )
           assert holder_after == holder_before, (
@@ -223,7 +223,7 @@ let
       # graceful-release — SIGTERM (no --force) → step_down → fast acquire
       # ══════════════════════════════════════════════════════════════════
       # failover below uses --grace-period=0 --force: SIGTERM + ~immediate
-      # SIGKILL. step_down() RACES the SIGKILL (it wins post-a5b06ef, but
+      # SIGKILL. step_down() RACES the SIGKILL (it wins post-d0329b9, but
       # the profraw doesn't flush — POD_NAME fix solved the overwrite, not
       # the SIGKILL-before-atexit). This subtest is the PRODUCTION rollout
       # path: --grace-period=30, no --force → pure SIGTERM → full 30s
@@ -312,7 +312,7 @@ let
       # ══════════════════════════════════════════════════════════════════
       # --grace-period=0 --force still sends SIGTERM before SIGKILL
       # (kubelet behavior). The scheduler's graceful shutdown is now
-      # fast enough (a5b06ef token-aware drain) that step_down()
+      # fast enough (d0329b9 token-aware drain) that step_down()
       # completes before SIGKILL arrives — it clears holderIdentity.
       # The standby's decide() sees empty holder → Decision::Steal →
       # acquires immediately (no TTL wait) AND bumps leaseTransitions.
@@ -326,7 +326,7 @@ let
           old_leader = leader_pod()
 
           # Record both pod names BEFORE the kill for the diagnostic
-          # print. With graceful step_down (a5b06ef), EITHER the
+          # print. With graceful step_down (d0329b9), EITHER the
           # standby OR the Deployment-spawned replacement can win the
           # empty lease — standby's next poll tick is 5s, replacement
           # startup is ~3-5s. Both are valid failover outcomes; the
@@ -640,7 +640,7 @@ let
       # ══════════════════════════════════════════════════════════════════
       # Gap closed: every other subtest goes through kubectl delete.
       # Even `--grace-period=0 --force` sends SIGTERM before SIGKILL
-      # (kubelet behavior), and post-a5b06ef step_down() wins that race
+      # (kubelet behavior), and post-d0329b9 step_down() wins that race
       # → holderIdentity cleared → standby acquires via empty-holder
       # fast path. NOTHING tested the no-FIN, no-step_down path: process
       # vanishes mid-build (OOM-kill, kernel panic, node hard-reset).

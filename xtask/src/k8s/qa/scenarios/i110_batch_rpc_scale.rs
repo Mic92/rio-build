@@ -25,7 +25,7 @@ pub struct BatchRpcScale;
 // for builder spawn under phase-2 contention. Observed ~145s
 // isolated, ~247s under contention (2026-05-13, 3% over the prior
 // 240s threshold; that threshold itself was widened from 180s in
-// 7df06acc8). The structural assertion — count per-path store RPCs,
+// 0e543b2e5). The structural assertion — count per-path store RPCs,
 // the I-110 fix collapses ~78 closure-BFS QueryPathInfo to ~12
 // BatchQueryPathInfo — is preferred but blocked: rio-store exposes
 // no per-method RPC counter. If one is added (it's an

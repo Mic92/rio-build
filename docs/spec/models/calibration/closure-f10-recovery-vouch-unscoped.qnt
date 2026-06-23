@@ -11,11 +11,11 @@
 // re-run command remains valid against the retained model text.
 //
 // Stage-C calibration override, closure-evidence family F10
-// (recovery / failover evidence scoping; corpus rep CE-45, f0d10a40b —
+// (recovery / failover evidence scoping; corpus rep CE-45, 35e555473 —
 // the recovery's produced-children clear accepted children vouched only
 // by long-terminal builds, clearing the mark although nothing live
 // co-owned that evidence and the store may have GC'd those outputs;
-// CE-46 650d5ac14 is the same scoping rule's condemn direction).
+// CE-46 7666ee201 is the same scoping rule's condemn direction).
 // Crosswalk row: closure-evidence-formal-design.md §4 "F10 CE-45,
 // CE-46 → ENC (rep: CE-45) → A3(ii)/A19 vouch direction over the
 // durable relation"; 0d verdict: the VERDICT block at the end of
@@ -77,7 +77,7 @@ module closureCalibF10RecoveryVouchUnscoped {
   ).* from "../closureEvidence"
 
   /// The pre-fix clear criterion: every durable child row Produced — no
-  /// live-build co-ownership required (pre-f0d10a40b).
+  /// live-build co-ownership required (pre-35e555473).
   def calibWeakClearCriterion(dm: str -> DrvRec, pgE: Set[(str, str)], d: str): bool = {
     val kids = pKids(pgE, d).filter(c => dm.get(c).rowExists)
     kids != Set() and kids.forall(c => dm.get(c).pgSt == MProduced)

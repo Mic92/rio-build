@@ -12,7 +12,7 @@
 //
 // Stage-C calibration override, closure-evidence family F5 (wanted-set
 // lifecycle; wired family representative re-routed within the family to
-// CE-16, ab8cdba18 — persisting wanted sets by overwrite would un-want
+// CE-16, 33fc31436 — persisting wanted sets by overwrite would un-want
 // outputs another build needs; the design's named rep CE-18 is the
 // rollback-replay structural override, which is inert at this model's
 // all-or-nothing merge-intent granularity — the as-built mergeRollback
@@ -24,7 +24,7 @@
 //
 // PRE-FIX behavior modeled: the merge transaction's durable wanted
 // write is an overwrite of the stored union with this submission's
-// contribution instead of a union (pre-ab8cdba18 shape). The B5 oracle
+// contribution instead of a union (pre-33fc31436 shape). The B5 oracle
 // is added at the apply site: an applied merge whose post-state stored
 // union no longer contains the pre-state union.
 //

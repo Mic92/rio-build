@@ -135,7 +135,7 @@ scope: with scope; ''
 
       # New leader ran recovery. Delta-wait (NOT absolute grep -qx
       # for `... 1`): this is the load-robust convergence gate after
-      # the strike-4 wall-clock-under-load timeouts (1ef4cc6bd
+      # the strike-4 wall-clock-under-load timeouts (4be73f78d
       # carried-forward to r27). The structural assertion is a delta
       # from a baseline captured on a KNOWN pod before the kill, with
       # an explicit fresh-process branch — not an absolute that races

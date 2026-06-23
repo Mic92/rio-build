@@ -2175,7 +2175,7 @@ async fn verify_preexisting_with_poisoned_dep_goes_dependency_failed() -> TestRe
 /// Pre-fix `verify_preexisting_completed` issued one fenced
 /// `update_derivation_status` per reset node + one per demoted parent
 /// — under GC-churn that is N round-trips per merge (the 307ms/merge
-/// tall-pole in the submitbuild-exhausted diag; 170f98983 TODO). With
+/// tall-pole in the submitbuild-exhausted diag; 06047ab73 TODO). With
 /// the batch-by-target persist, N=20 leaf resets must cost ≤3 fenced
 /// batches (one per `revert_target_for` status; here: all Ready → 1).
 // r[verify sched.merge.stale-completed-verify+5]
@@ -2833,7 +2833,7 @@ async fn merge_phase_4_never_awaits_store_rpc() -> TestResult {
 // P2 flush trigger (iv): deadline arm biased before rx — starvation regression
 // ===========================================================================
 
-/// Regression: with the Tick-head flush deleted (9fdd3947f) AND the
+/// Regression: with the Tick-head flush deleted (e76ea118b) AND the
 /// biased select! ordering rx before the deadline arm, a sub-BATCH_MAX
 /// `pending_merges` batch had NO drain path while rx is continuously
 /// Ready. Five MergeDags + a sustained non-MergeDag flood: under the

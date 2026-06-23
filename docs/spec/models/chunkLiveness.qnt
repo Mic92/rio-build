@@ -349,7 +349,7 @@ module chunkLiveness {
   ///   - rollbackNoopStaleToken: the no-op was specifically the C4
   ///     own-heartbeat token mismatch.
   ///   - sweptSharedByCount: one sweep batch decremented a chunk by
-  ///     more than one (the adfd303d7-C2 by-count clause exercised).
+  ///     more than one (the 90c739c74-C2 by-count clause exercised).
   ///   - drainSkippedResurrected: the drain re-check found a
   ///     resurrected chunk and skipped the S3 delete.
   ///   - orphanRecheckSaved: the orphan-chunk sweep's inner UPDATE
@@ -683,7 +683,7 @@ module chunkLiveness {
   val s5LiveOwnerNeverReaped = not(wit.liveOwnerReaped)
 
   /// L3 support `NoForeignFreshen` (store.put.placeholder-claim+2's
-  /// heartbeat clause; the 937a9c928 lesson): the heartbeat freshens
+  /// heartbeat clause; the 3cf0b77b6 lesson): the heartbeat freshens
   /// only the heartbeater's own placeholder generation — a stale
   /// uploader can never keep a successor's (or any foreign) placeholder
   /// artificially fresh, which is what makes every abandoned
@@ -740,7 +740,7 @@ module chunkLiveness {
 
   /// Violated when one sweep batch decrements a chunk by 2 or more — a
   /// chunk shared by several manifests dying in one batch is
-  /// decremented by count, not collapsed to one (the adfd303d7-C2
+  /// decremented by count, not collapsed to one (the 90c739c74-C2
   /// clause of store.chunk.refcount-decrement).
   val noSharedByCountDecrement = not(wit.sweptSharedByCount)
 
@@ -1145,7 +1145,7 @@ module chunkLiveness {
   /// transaction (`sweep_one_batch` collects the whole batch's hashes
   /// into one UNNEST decrement, by count): a chunk referenced by both
   /// dying manifests is decremented by 2 in one statement — the
-  /// adfd303d7-C2 by-count discipline (store.chunk.refcount-decrement).
+  /// 90c739c74-C2 by-count discipline (store.chunk.refcount-decrement).
   action pathSweepBatch: bool = {
     val counts = HASHES.mapBy(h =>
       PATHS.filter(p => parsedListOf(p).contains(h)).size())
@@ -1522,7 +1522,7 @@ module chunkLivenessContend {
 
   /// Two complete manifests share chunk 1; one batch sweep deletes
   /// both and decrements the shared chunk by two in a single
-  /// transaction (the adfd303d7-C2 by-count discipline), zero-detects
+  /// transaction (the 90c739c74-C2 by-count discipline), zero-detects
   /// it and enqueues it once. The second writer's upgrade also skips
   /// the shared chunk's PUT (uploaded_at already set — the CR-4
   /// compliant dedup).

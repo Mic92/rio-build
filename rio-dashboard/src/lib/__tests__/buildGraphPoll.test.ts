@@ -474,7 +474,7 @@ describe('createBuildGraphPoll', () => {
 
   // ---- latch transitions over the evidence product (merged_bug_081) ----
   //
-  // fd135a0ab typed the latch arm's guards but shipped the inverse
+  // 91539d92b typed the latch arm's guards but shipped the inverse
   // edge bare (`!settled && allTerminal`): an empty response
   // un-latched a settled drawer into absorbing 5s polling and wiped
   // the retained graph; the perpetual settled poll also made any

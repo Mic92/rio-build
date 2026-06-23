@@ -9811,7 +9811,7 @@ async fn assert_unclaimed_ages_out(
 /// `parked_until=None` and NO open attempt is reached by NEITHER
 /// phase-12 (draws from open-attempt rows only) NOR the
 /// parked-conversion arm (filters on `parked_until.is_some_and(..)`)
-/// at 368e279cf. With the phase-17 candidate filter skipping nodes
+/// at 87dde788e. With the phase-17 candidate filter skipping nodes
 /// that carry an unresolved job, this is the residual that strands a
 /// Ready node forever — c4's age-out arm closes it.
 // r[verify sched.materialize.unclaimed-age-out]
@@ -11478,7 +11478,7 @@ async fn materialization_probe_is_screened_not_minted() -> TestResult {
 // ---------------------------------------------------------------------------
 
 /// W9-N (round-9 B1 admissibility): the zero-interest cancel sweep is
-/// O(1) write transactions for N jobs. The landed close (41e722dfc)
+/// O(1) write transactions for N jobs. The landed close (a134b5c45)
 /// replaced the per-job fenced round-trip loop (live_053: 5,258
 /// sequential cancels x 3.16ms = 16.6s inside one 134.65s Tick) with
 /// ONE fenced sweep + ONE pin-release pass; the landed battery
@@ -11595,7 +11595,7 @@ async fn zero_interest_cancel_sweep_transaction_bound() -> TestResult {
 
 /// **W9-AB (bug_110)** — *a backoff lapsing DURING the beat query is
 /// served on this very poll, not withheld until the next one*. The
-/// wave-8 disclosed-correction (faac1261e) re-pointed only the
+/// wave-8 disclosed-correction (a08d5a740) re-pointed only the
 /// prune/members reads to the post-await `beat_now`; the Phase-3
 /// `claimability(now)` serve filter and the caller's contact stamp
 /// stayed on the PRE-await clock — half the same-class reads. With
@@ -12068,7 +12068,7 @@ async fn insert_test_derivation_local(pool: &sqlx::PgPool, hash: &str) -> anyhow
 /// through [`PassClock`] — zero raw `Instant::now()` mints inside the
 /// handler region, exactly two `PassClock::arm()` sites (pass start +
 /// the beat arm's completion re-arm). A third arm or a raw now() is a
-/// second clock in the pass — the merged-half-sweep shape (faac1261e
+/// second clock in the pass — the merged-half-sweep shape (a08d5a740
 /// re-pointed prune/members and left the serve filter + contact stamp
 /// on the stale clock).
 #[test]
@@ -12215,7 +12215,7 @@ async fn conversion_requeue_is_a_disclosing_no_op() -> TestResult {
 // ──────────────────────────────────────────────────────────────────────
 // sh-002 row 4 (coalesce-outcomes) red-first batteries
 //
-// Hazard-M re-derived at 5f1ce214c (the per-CLAUDE.md narrowing record
+// Hazard-M re-derived at e3488576b (the per-CLAUDE.md narrowing record
 // — verification grep + its output at the time of writing):
 //   rg -n 'ActorCommand::ReportPullOutcome' rio-scheduler/src/actor/tests/
 //   → tests/helpers.rs:1197
@@ -12316,7 +12316,7 @@ async fn sh002_single_report_resolves_without_tick() -> TestResult {
 // r[verify sched.executor.report-idempotent]
 /// sh-002 row-4 arm (a): N Success reports queued back-to-back drive
 /// ONE `complete_ready_from_store_batch` call, not N per-item ones.
-/// RED at 5f1ce214c: each report's `consume_materialization_outcome`
+/// RED at e3488576b: each report's `consume_materialization_outcome`
 /// calls the batch helper inline with a `len=1` slice — the test
 /// counter moves by 3. After the two-level accumulator the flush
 /// drains all queued completions into one batched call.
@@ -12450,7 +12450,7 @@ async fn flush_is_o1_pg_per_batch() -> TestResult {
 
 // r[verify sched.executor.report-idempotent]
 /// sh-027 §3 (`s6-batch-tighten`): a 50-report burst coalesces to
-/// flush batches with N̄≥20. RED at 59d532ff0 two ways: (a) the
+/// flush batches with N̄≥20. RED at c702f726f two ways: (a) the
 /// `rio_scheduler_pull_outcome_flush_batch_size` histogram does not
 /// exist; (b) with the histogram added but the retired mailbox-empty
 /// trigger (sh-002 trigger iv) intact, the test harness's serial
@@ -12511,12 +12511,12 @@ async fn report_burst_coalesces_to_batch_ge_20() -> TestResult {
     }
     assert!(
         !samples.is_empty(),
-        "RED(a) at 59d532ff0: rio_scheduler_pull_outcome_flush_batch_size does not exist"
+        "RED(a) at c702f726f: rio_scheduler_pull_outcome_flush_batch_size does not exist"
     );
     let max = samples.iter().copied().fold(0.0_f64, f64::max);
     assert!(
         max >= 20.0,
-        "RED(b) at 59d532ff0: the retired mailbox-empty trigger flushed \
+        "RED(b) at c702f726f: the retired mailbox-empty trigger flushed \
          per-item (max batch size {max}); the deadline arm must coalesce \
          a 50-report burst to ≥20 (sh-027 §3 design target)"
     );
@@ -12542,7 +12542,7 @@ async fn report_burst_coalesces_to_batch_ge_20() -> TestResult {
 /// sh-027 §3 (`s6-batch-tighten`, phase-D): N batched Release-arm
 /// reports drive ZERO per-item `companion_release` awaits — the
 /// phase-D loop collects `DeferredRelease` and runs ONE
-/// `companion_release_batch` after. RED at 59d532ff0: each
+/// `companion_release_batch` after. RED at c702f726f: each
 /// `apply_batched_companion` Release arm `.await`ed
 /// `companion_release` inline → counter moves by N. Behaviour pin:
 /// every claim is RELEASED (re-claimable) and the deferral stamps
@@ -12592,7 +12592,7 @@ async fn phase_d_release_is_batched() -> TestResult {
     let delta = handle.debug_counters().await?.companion_release_awaits - before;
     assert_eq!(
         delta, 0,
-        "RED at 59d532ff0: 6 RetryLater reports drove 6 per-item \
+        "RED at c702f726f: 6 RetryLater reports drove 6 per-item \
          companion_release awaits — phase-D must collect DeferredRelease \
          and run ONE companion_release_batch (got {delta})"
     );
@@ -12614,7 +12614,7 @@ async fn phase_d_release_is_batched() -> TestResult {
 // r[verify sched.executor.report-idempotent]
 /// sh-002 row-4 arm (c): a `LeaderLost` queued behind pending reports
 /// drains every held reply with `Err(NotLeader)` — never a silent
-/// `clear()`. RED at 5f1ce214c: there is no accumulator; each report
+/// `clear()`. RED at e3488576b: there is no accumulator; each report
 /// runs to completion inline (the unknown-exec ack-and-ignore arm
 /// returns `Ok(())`), so the receivers below resolve `Ok` and the
 /// `Err(NotLeader)` assertion fails.

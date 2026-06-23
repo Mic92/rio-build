@@ -8133,7 +8133,7 @@ mod tests {
     /// pool still surfaces.
     #[test]
     fn nar_budget_acquirer_census_flags_strawman_bypass() {
-        // The exact wave-9 bare-sibling shape (ef960dca5): a whole
+        // The exact wave-9 bare-sibling shape (333fc30a0): a whole
         // wire-supplied charge acquired with no ledger consult.
         let strawman_src = "\
 fn rogue_reserve(budget: &std::sync::Arc<tokio::sync::Semaphore>, declared: u64) {
@@ -8532,7 +8532,7 @@ fn rogue_reserve(budget: &std::sync::Arc<tokio::sync::Semaphore>, declared: u64)
     // adversarial trickle that satisfies every per-read clock, never
     // over-delivers, and never EOFs (the exact merged_bug_021 evasion
     // shape), with a parked sibling then completing.
-    /// RED pre-fix (verbatim, run at 83e596f0c): `left: leg still
+    /// RED pre-fix (verbatim, run at 8f6e71592): `left: leg still
     /// holding at 3× the would-be deadline (5×stall + declared/
     /// floor-rate ≈ 1.5s): a 150ms 1-byte trickle resets the per-read
     /// stall clock forever, advances store_bytes so the takeover
@@ -8655,7 +8655,7 @@ fn rogue_reserve(budget: &std::sync::Arc<tokio::sync::Semaphore>, declared: u64)
     // span releases by the hold deadline with permits restored and the
     // parked sibling completing (the post-read tail is ENFORCED, not
     // premised: rio-common's S3 client ships no TimeoutConfig, Q-108).
-    /// RED pre-fix (verbatim, run at 83e596f0c; the pre-fix park used
+    /// RED pre-fix (verbatim, run at 8f6e71592; the pre-fix park used
     /// the hash gate — the only pre-fix-expressible post-read seam,
     /// same population: a holder past the read loop): `left:
     /// reservation still held at 3× the would-be deadline — the
@@ -9054,7 +9054,7 @@ fn rogue_reserve(budget: &std::sync::Arc<tokio::sync::Semaphore>, declared: u64)
     // second tenant admits (cross-tenant isolation observed, not
     // narrated). Production constructors throughout: the ledger, the
     // cap, and `reserve` are the production objects.
-    /// RED pre-fix (verbatim, run at the WO-S1-2a tip 9bc598728 — the
+    /// RED pre-fix (verbatim, run at the WO-S1-2a tip 703c06f30 — the
     /// 2b-pre tree): `left: three ~MAX-scale declarations from one
     /// tenant all acquired (pool depleted 3x by one tenant's
     /// declarations; no per-tenant accounting exists) / right: third

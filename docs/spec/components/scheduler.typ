@@ -1076,7 +1076,7 @@ registration, draining, degraded, or connecting state left to report.
   only if both succeed. PG is cleared FIRST: if the PG clear fails, the
   in-memory state is left untouched (still Poisoned) and `false` is returned,
   so the operator's retry finds the derivation still poisoned and can proceed
-  --- the pre-`b874e5120` in-mem-first ordering left the in-memory status
+  --- the pre-`f5d63d31f` in-mem-first ordering left the in-memory status
   reset after a PG blip, so the retry hit the not-poisoned guard and the
   clear became a permanent no-op until restart. Idempotent: calling on a
   non-poisoned or non-existent derivation returns `cleared=false` without
@@ -5506,7 +5506,7 @@ round-trip --- 19111 `ready_all_cells_ice_masked` drops with
   stripped producer cell is a regression signal, not a closure seed.
 ]
 Rationale (bughunt-11 merged_bug_015; amends the wave-10 transitive
-closure, 7ae2b282f): the worklist enqueued a rung only if it became a
+closure, da9a66e37): the worklist enqueued a rung only if it became a
 closure MEMBER (≥1 cell admitted), and both per-cell filters before
 membership were silent --- so a spot-only g7 under an od pin, or a
 small-ceiling g7, severed the operator's declared g8→g7→g6 tail in

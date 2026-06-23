@@ -53,7 +53,7 @@ import census_corpora
 import rust_strip
 
 # Landed rows: (state, slot, file, producer-anchor). Flipped at the
-# wave-close --verify-landed (bw12, dfd3afb2b+19); every anchor
+# wave-close --verify-landed (bw12, 4c391788c+19); every anchor
 # grep-verified at the composed tree. The frontier producer landed in
 # rio-log-kernel (the CF-2 delegation: CoverageMap::contiguous_prefix_end
 # is the one formula; store + builder consume). The duplicate-formula

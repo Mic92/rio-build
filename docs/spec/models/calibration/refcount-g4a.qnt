@@ -11,19 +11,19 @@
 // store.gc.* rules and their tests.
 //
 // Family disposition of the commits NOT carried by an override module:
-//   - `aa738a5d7` (M_006) — ENC, refcountCalibG4aDrainNoRecheck below
+//   - `c1b901409` (M_006) — ENC, refcountCalibG4aDrainNoRecheck below
 //     (the drain re-check half; the resurrect arm of the same commit is
 //     left as built — reverting the re-check alone is the minimal delta
 //     that re-opens the race the commit closed).
-//   - `a2d4c6cd8` — ENC-A (drain-re-check-lock half): the pre-fix
+//   - `7ab2e2351` — ENC-A (drain-re-check-lock half): the pre-fix
 //     re-check ran without FOR UPDATE, so its verdict could be stale at
 //     DeleteObject time; at the model's one-action-per-SQL-transaction
 //     granularity that staleness window collapses onto "the delete does
 //     not observe the concurrent resurrect", which is exactly the state
 //     the no-re-check override below reaches. The path_tenants /
 //     cycle-reclaim halves of the same commit are G4b (NOT-ENCODED).
-//   - `2b68855c5`, `261e78c9d`, `7d5ff71dc`, `62851c73d`, `132446e7e`,
-//     `5ba946682`, `adfd303d7` C1/C3, `bf7e516e4` C5 — G4b, NOT-ENCODED
+//   - `8d4e3c47f`, `04e7f1aff`, `a41af1a96`, `cd3ba11bd`, `0f0fb101c`,
+//     `d7ad55fb3`, `90c739c74` C1/C3, `21599e89c` C5 — G4b, NOT-ENCODED
 //     as pre-registered (the path-level reachability GC: mark CTE,
 //     sweep re-check, referrer ordering, resurrection settling,
 //     path_tenants); covered by store.gc.two-phase,
@@ -32,7 +32,7 @@
 //     sweep/mark test suites.
 
 // =========================================================================
-// CALIBRATION — pre-aa738a5d7 (M_006): the outbox drain deletes the
+// CALIBRATION — pre-c1b901409 (M_006): the outbox drain deletes the
 // backend object for every row it picks up, with no same-transaction
 // re-check of the chunk's current state — a chunk resurrected by a
 // re-upload between the soft-delete that enqueued it and the drain pass
@@ -48,12 +48,12 @@
 // VERDICT ROWS (Stage-C, relocated from the retired refcount invariant
 // map; full table with the NOT-ENC/SUBS dispositions:
 // docs/spec/models/refcount-records.md):
-// - refcountCalibG4aDrainNoRecheck (aa738a5d7 / M_006, ENC): FALSIFIES
+// - refcountCalibG4aDrainNoRecheck (c1b901409 / M_006, ENC): FALSIFIES
 //   cr1NoLiveChunkCollected @ calibStep (depth 7, 63,334/4,030) — a re-
 //   upload resurrects the enqueued chunk and the pre-fix drain deletes
 //   its object while referenced. Baseline: contend-regime constants
 //   verbatim (Stage-B exhaustive HOLDS).
-// - ENC-A by analogy: a2d4c6cd8 (drain re-check half) covered by
+// - ENC-A by analogy: 7ab2e2351 (drain re-check half) covered by
 //   refcountCalibG4aDrainNoRecheck — at one-action-per-SQL-transaction
 //   granularity the lockless re-check's staleness window collapses onto
 //   "the delete does not observe the concurrent resurrect".

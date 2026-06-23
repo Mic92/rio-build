@@ -3831,7 +3831,7 @@ rec {
     # the heartbeat) and stay wired against the as-built model until
     # Phase 2 re-points them at the model of record.
 
-    # G3 (dd5c11376 / M_033): the needs-upload verdict is keyed on the
+    # G3 (791c746f7 / M_033): the needs-upload verdict is keyed on the
     # liveness record instead of uploaded_at — a writer skips the PUT for
     # a chunk nobody confirmed, the 2026-04-06 data-loss precondition.
     quint-refcount-calib-g3-counter-presence = mkQuintWitnessCheck {
@@ -3843,7 +3843,7 @@ rec {
       witness = "cr4PresenceFromConfirmedUpload";
     };
 
-    # G4a (aa738a5d7 / M_006): the drain loses its same-transaction
+    # G4a (c1b901409 / M_006): the drain loses its same-transaction
     # re-check before DeleteObject — a chunk resurrected by a re-upload
     # between soft-delete and drain loses its object while referenced
     # (the data-loss invariant's action form).
@@ -3856,7 +3856,7 @@ rec {
       witness = "cr1NoLiveChunkCollected";
     };
 
-    # G5 (a1b49b4a3): no heartbeat — a live, progressing upload outlives
+    # G5 (66613b03f): no heartbeat — a live, progressing upload outlives
     # the stale threshold and the reclaim path reaps it mid-flight.
     quint-refcount-calib-g5-no-heartbeat = mkQuintWitnessCheck {
       name = "refcount-calib-g5-no-heartbeat";
@@ -5974,7 +5974,7 @@ rec {
     # Deliberately no tracey markers: the spec rules are verified by the
     # HOLD regime checks above, not by these pre-fix reproductions.
 
-    # G-A (fba9086dc): losing the live pod-phase re-check before the
+    # G-A (6566579f9): losing the live pod-phase re-check before the
     # excess-pending DELETE reaps a Job whose pod is already running.
     quint-ctrl-calib-ga-live-recheck = mkQuintWitnessCheck {
       name = "ctrl-calib-ga-live-recheck";
@@ -5985,7 +5985,7 @@ rec {
       witness = "reapSafety";
     };
 
-    # G-B (cdc78f839): acking the attempted spawn slice instead of the
+    # G-B (857c21cc2): acking the attempted spawn slice instead of the
     # successfully-created set arms dispatched_cells with no Job behind
     # it.
     quint-ctrl-calib-gb-ack-spawned-only = mkQuintWitnessCheck {
@@ -5997,7 +5997,7 @@ rec {
       witness = "ackSoundness";
     };
 
-    # M1 (79f86b888): clearing prev_idle only on the reload Ok arm lets
+    # M1 (0d85b5933): clearing prev_idle only on the reload Ok arm lets
     # a stale entry survive a failed-reload acquire and over-reap a
     # freshly idle claim (the amplify-polarity row of the lease-edge
     # table).
@@ -6010,7 +6010,7 @@ rec {
       witness = "idleReapSafety";
     };
 
-    # M2 (08d49c52c): dropping the consolidate-only inflight prune makes
+    # M2 (b6c3c4a59): dropping the consolidate-only inflight prune makes
     # the controller's own reap read as a Karpenter vanish on the next
     # full tick — a spurious ICE mark.
     quint-ctrl-calib-m2-consolidate-prune = mkQuintWitnessCheck {
@@ -6022,7 +6022,7 @@ rec {
       witness = "iceMarkSoundness";
     };
 
-    # M3/M4 (703cbf42a): clearing the reload latch on the load attempt
+    # M3/M4 (07960f77d): clearing the reload latch on the load attempt
     # (not on Ok) lets the same tick persist the stale standby snapshot
     # over PG.
     quint-ctrl-calib-m34-reload-latch = mkQuintWitnessCheck {
@@ -9962,7 +9962,7 @@ rec {
     # its first violation). Deliberately no tracey markers (same policy as
     # the other models' witness/calibration checks).
 
-    # F1 (443670d43 / GW-1): the session permit/gauge release keyed on the
+    # F1 (96d127a76 / GW-1): the session permit/gauge release keyed on the
     # sessions map (client action) again — a server-side ending leaves
     # capacity held with nothing armed to release it.
     quint-gw-calib-f1-server-side-release = mkQuintWitnessCheck {
@@ -9978,7 +9978,7 @@ rec {
       serverHeapMb = 8192;
     };
 
-    # F2 (79912eda0 / GW-3): connection emptiness measured on open channels
+    # F2 (a67eb7b6c / GW-3): connection emptiness measured on open channels
     # again — a channel open disarms the empty grace and the
     # open-without-exec population sits with no deadline armed.
     quint-gw-calib-f2-open-disarms-grace = mkQuintWitnessCheck {
@@ -9990,7 +9990,7 @@ rec {
       witness = "s20GraceArmedExactlyWhenEmpty";
     };
 
-    # F3 (1c46d9781 / GW-4): a polite disconnect queued without arming the
+    # F3 (559aa986f / GW-4): a polite disconnect queued without arming the
     # force-close at the same decision point.
     quint-gw-calib-f3-decide-without-arm = mkQuintWitnessCheck {
       name = "gw-calib-f3-decide-without-arm";
@@ -10001,7 +10001,7 @@ rec {
       witness = "s12DecideImpliesArmed";
     };
 
-    # F4 (9739aca65 / GW-5): channel_close decrements unconditionally again
+    # F4 (3ac6b0a65 / GW-5): channel_close decrements unconditionally again
     # (forged/duplicate closes skew open_channels; exec honored on
     # never-accepted channels).
     quint-gw-calib-f4-forged-close-decrement = mkQuintWitnessCheck {
@@ -10013,7 +10013,7 @@ rec {
       witness = "s7ChannelAccounting";
     };
 
-    # F5 (51123b2be / GW-2): the close-out sends ordered before the
+    # F5 (b96f96e00 / GW-2): the close-out sends ordered before the
     # SessionGuard drop again — capacity release waits on the peer draining
     # the handle queue.
     quint-gw-calib-f5-release-after-close-out = mkQuintWitnessCheck {
@@ -10025,7 +10025,7 @@ rec {
       witness = "s15ReleaseBeforeCloseOut";
     };
 
-    # F6 (0f476d6f0/a207ee15c / GW-9): a session-exit edge skips
+    # F6 (2afc5f973/cca22eb07 / GW-9): a session-exit edge skips
     # cancel_active_builds again — the recurring case-completeness shape.
     quint-gw-calib-f6-exit-edge-skips-cancel = mkQuintWitnessCheck {
       name = "gw-calib-f6-exit-edge-skips-cancel";
@@ -10039,7 +10039,7 @@ rec {
       serverHeapMb = 8192;
     };
 
-    # F7 (765671437 / GW-13): the shutdown token only observed at the
+    # F7 (542effb13 / GW-13): the shutdown token only observed at the
     # opcode-read point again — drain expiry exits with an in-flight build
     # never cancelled.
     quint-gw-calib-f7-drain-expiry-no-cancel = mkQuintWitnessCheck {
@@ -10051,7 +10051,7 @@ rec {
       witness = "l4DrainObligationsArmed";
     };
 
-    # F9 (755f49744 / GW-16): an upstream RPC await inside a session loses
+    # F9 (744efa31b / GW-16): an upstream RPC await inside a session loses
     # its deadline again — the session parks in rpc-wait unbounded.
     quint-gw-calib-f9-rpc-wait-no-deadline = mkQuintWitnessCheck {
       name = "gw-calib-f9-rpc-wait-no-deadline";
@@ -10062,7 +10062,7 @@ rec {
       witness = "l6RpcWaitDeadlineArmed";
     };
 
-    # F10 (9b693441f / GW-19): a transient accept error terminates the
+    # F10 (3c13af9b5 / GW-19): a transient accept error terminates the
     # listener (and the process, with every live session) again.
     quint-gw-calib-f10-accept-error-fatal = mkQuintWitnessCheck {
       name = "gw-calib-f10-accept-error-fatal";
@@ -10232,7 +10232,7 @@ rec {
     # witnesses guarded walk-era mechanisms and retired with them.
     # No tracey markers on calibration checks (house convention).
 
-    # F1 soundness (CE-2, 29f0a8afa): no stale-Produced verify — a
+    # F1 soundness (CE-2, 898d0d4b4): no stale-Produced verify — a
     # resubmission's parent ends Ready above a Produced child whose
     # live-wanted outputs are absent.
     quint-closure-calib-f1-stale-produced = mkQuintWitnessCheck {
@@ -10249,7 +10249,7 @@ rec {
       serverHeapMb = 8192;
     };
 
-    # F4 demand-set completeness (CE-66, 85213119d): the prune's demand
+    # F4 demand-set completeness (CE-66, c527cc08b): the prune's demand
     # set is the structural roots only — an explicitly requested
     # non-root is silently dropped.
     quint-closure-calib-f4-demand-drop = mkQuintWitnessCheck {

@@ -8,15 +8,15 @@
 // pattern as gw-f1-capacity.qnt.
 //
 // Candidates carried by this file:
-//   - GW-3 (79912eda0, repr.)  gwCalibF2OpenDisarmsGrace    -> s20 / l1
-//   - GW-3 (a207ee15c const.)  gwCalibF2NoHandshakeDeadline -> l3
+//   - GW-3 (a67eb7b6c, repr.)  gwCalibF2OpenDisarmsGrace    -> s20 / l1
+//   - GW-3 (cca22eb07 const.)  gwCalibF2NoHandshakeDeadline -> l3
 //
 // Family disposition of the GW-3 constituents NOT carried by their own
-// override: 0101be9c6 (grace armed only in channel_close — the
+// override: a761333ef (grace armed only in channel_close — the
 // never-opens population unbounded) is the same wrong-emptiness-signal
 // mechanism as the representative at model resolution (the grace fails to
 // be armed for an idle authenticated connection), so the
-// gwCalibF2OpenDisarmsGrace falsification covers it; aec2521a3 (no
+// gwCalibF2OpenDisarmsGrace falsification covers it; de38970e8 (no
 // pre-banner bound) reverts the accept-anchored pre-auth deadline, whose
 // loss is the same L1 armed-path falsification one stage earlier — covered
 // by the same module's L1 run (the pre-banner stage's only designed path
@@ -28,7 +28,7 @@
 //     docs/spec/models/calibration/gw-f2-occupancy.qnt
 
 // =========================================================================
-// CALIBRATION — pre-79912eda0 (GW-3 representative): connection emptiness
+// CALIBRATION — pre-a67eb7b6c (GW-3 representative): connection emptiness
 // was measured on OPEN CHANNELS, not exec'd sessions — a channel open
 // disarmed the empty-connection grace (and arming happened only on close).
 // A client that authenticates, opens a channel and never execs (while
@@ -52,12 +52,12 @@
 //   (465/51). Trace: an authenticated connection opens a channel and never
 //   execs; the pre-fix open disarms the empty grace, so the connection sits
 //   with no stage deadline, no grace, no budget and no designed reap
-//   enabled against a keepalive-answering peer (79912eda0). The 0101be9c6
+//   enabled against a keepalive-answering peer (a67eb7b6c). The a761333ef
 //   constituent (grace armed only at channel_close) is the same wrong-
-//   emptiness-signal mechanism at model resolution, and aec2521a3 (no pre-
+//   emptiness-signal mechanism at model resolution, and de38970e8 (no pre-
 //   banner bound) is the same L1 armed-path loss one stage earlier — both
 //   covered by this module's falsification.
-// - GW-3 gwCalibF2NoHandshakeDeadline (a207ee15c constituent): FALSIFIES L3
+// - GW-3 gwCalibF2NoHandshakeDeadline (cca22eb07 constituent): FALSIFIES L3
 //   @ 8 (663/67) — an exec admitted with no handshake deadline armed.
 // - BASELINE: gwCalibF2AsBuilt (GW-3 both arms) 1,350,115 distinct / 99 s —
 //   HOLDS allInvariants.
@@ -125,7 +125,7 @@ module gwCalibF2OpenDisarmsGrace {
 }
 
 // =========================================================================
-// CALIBRATION — pre-a207ee15c (GW-3 constituent): the protocol handshake
+// CALIBRATION — pre-cca22eb07 (GW-3 constituent): the protocol handshake
 // phase had no deadline (the opcode idle timeout starts only
 // post-handshake). An authenticated client that execs and then sends zero
 // bytes parks the session pre-handshake forever.
@@ -152,7 +152,7 @@ module gwCalibF2NoHandshakeDeadline {
   ).* from "../gwConnLifecycle"
 
   /// PRE-FIX exec admission: the session starts its pre-handshake read
-  /// with NO handshake deadline armed (the 30 s bound a207ee15c added).
+  /// with NO handshake deadline armed (the 30 s bound cca22eb07 added).
   action calibExecAdmitNoHandshakeDeadline(c: str, i: int): bool = all {
     conn(c).exists, conn(c).live, not(conn(c).kex), not(conn(c).herr), not(conn(c).expired), not(conn(c).discQ),
     chanAt(c, i).ch == ChAccepted,

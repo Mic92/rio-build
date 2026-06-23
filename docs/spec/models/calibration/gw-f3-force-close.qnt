@@ -8,11 +8,11 @@
 // pattern as gw-f1-capacity.qnt.
 //
 // Candidate carried by this file:
-//   - GW-4 (1c46d9781, repr.)  gwCalibF3DecideWithoutArm -> s12
+//   - GW-4 (559aa986f, repr.)  gwCalibF3DecideWithoutArm -> s12
 //
 // Family disposition of the GW-4 constituents NOT carried by their own
 // override:
-//   - 2f11bb8f5 (enforcement only on the read path; TCP_USER_TIMEOUT
+//   - 5a144f248 (enforcement only on the read path; TCP_USER_TIMEOUT
 //     backstop added): at the model's armed-style resolution this revert is
 //     the loss of the parked-write enforcement wake (`parkWake`) plus the
 //     kernel reap letter — exactly the state the wired
@@ -22,7 +22,7 @@
 //     pre-fix bug class at model resolution; a separate override would
 //     re-derive it. Recorded as a structural-argument disposition in the
 //     calibration table, not silently dropped.
-//   - 5a50b3f70 (KEX-parked pre-auth connections outlive the grace because
+//   - 6d3dff89a (KEX-parked pre-auth connections outlive the grace because
 //     the polite disconnect is undeliverable): the enforcement half is the
 //     same decide-implies-arm + transport-deadline mechanism this module's
 //     representative reverts (S12), and the occupancy half is GW-3's
@@ -35,7 +35,7 @@
 //     docs/spec/models/calibration/gw-f3-force-close.qnt
 
 // =========================================================================
-// CALIBRATION — pre-1c46d9781 (GW-4): the auth-timeout path queued the
+// CALIBRATION — pre-559aa986f (GW-4): the auth-timeout path queued the
 // polite SSH_MSG_DISCONNECT WITHOUT arming the transport force-close, on
 // the assumption the pre-auth read deadline still covered the connection —
 // but that deadline stops applying the instant authentication completes,
@@ -55,15 +55,15 @@
 // - GW-4 gwCalibF3DecideWithoutArm: FALSIFIES S12 @ 5 (443/80). Trace:
 //   reject-only auth attempts → the pre-auth deadline's phase-2 decision
 //   queues the polite disconnect WITHOUT arming the force-close
-//   (1c46d9781).
-// - GW-4 2f11bb8f5 constituent (enforcement restricted to the read path;
+//   (559aa986f).
+// - GW-4 5a144f248 constituent (enforcement restricted to the read path;
 //   TCP_USER_TIMEOUT added as kernel backstop): structural-argument
 //   disposition — at the model's armed-style resolution this revert is the
 //   loss of the parked-write enforcement wake (parkWake) plus the kernel
 //   reap letter, and its violating state is exactly the one quint-gw-
 //   lifecycle-falsification-l1-no-inactivity already exhibits (L1-strict
 //   falls in fault-degraded when both are absent); permanently pinned by
-//   that probe rather than duplicated as a third F3 override. The 5a50b3f70
+//   that probe rather than duplicated as a third F3 override. The 6d3dff89a
 //   constituent's enforcement half is the same decide-implies-arm mechanism
 //   this module reverts; its occupancy half is GW-3's surface.
 // - BASELINE: gwCalibF3AsBuilt (GW-4) 1,183 distinct / 38 s — HOLDS;

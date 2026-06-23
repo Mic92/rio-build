@@ -498,7 +498,7 @@ mod jwt_issuance_tests {
     /// goes through `refresh_session_jwt`. A `SessionJwt` constructed
     /// with an already-expired token returns a fresh one on first
     /// access; second access returns the SAME (now-fresh) string with
-    /// no churn. Regression: at b62291b8 the token was a bare
+    /// no churn. Regression: at fdb01df0 the token was a bare
     /// `Option<String>` snapshotted once at `exec_request` — a single
     /// channel running a >65min build would send the stale token on
     /// the post-build `wopQueryPathInfo`.

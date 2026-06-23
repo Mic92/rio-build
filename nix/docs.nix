@@ -237,7 +237,7 @@ let
   #
   # The custom domain serves at root, so the book's root-relative hrefs
   # (`/spec/...`, `/style.css`) resolve correctly. The default GH Pages
-  # project-site URL (lovesegfault.github.io/rio-build/) would NOT — it
+  # project-site URL (anthropics.github.io/rio/) would NOT — it
   # serves under a `/<repo>/` subpath that root-relative links escape.
   # If the custom domain is ever dropped, hrefs need a base-path prefix
   # (the prior HTML pipeline threaded one via a typst input; the native
@@ -474,7 +474,7 @@ rec {
         # (c) edit-this-page link (page.typ footer; repo-edit-base from
         # meta.typ). architecture.typ is a top-level chapter so the
         # href is unambiguous.
-        grep -q 'github.com/lovesegfault/rio-build/edit/main/docs/architecture.typ' \
+        grep -q 'github.com/anthropics/rio/edit/main/docs/architecture.typ' \
           ${html}/architecture.html
         # (c1) QA #3: tree-wide bare-href guard. typst emits `<a href>`
         # (no value) when a link attr is none/unset; (c) checks one
@@ -519,7 +519,7 @@ rec {
         test -s ${html}/pagefind/pagefind.js
         test "$(ls ${html}/pagefind/fragment/ | wc -l)" -ge 30
         # (f) bug_003: refs.gh() permalinks pin a commit, not /blob/main/
-        ! grep -rq 'lovesegfault/rio-build/blob/main/' ${html}
+        ! grep -rq 'anthropics/rio/blob/main/' ${html}
         # (g) bug_033/025: #r() emits an `id="r-…"` anchor per marker so
         # rref() resolves. gateway.typ has ~100 markers; floor 80.
         test "$(grep -oE 'id="r-[a-z]' \

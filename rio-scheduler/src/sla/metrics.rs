@@ -965,7 +965,7 @@ mod tests {
 
     /// **W9-Z (merged_bug_109)** — the HELP-alphabet pin: every value
     /// in the `exit` label census appears in the metric's
-    /// `describe_counter!` HELP text. 8635839bf added the
+    /// `describe_counter!` HELP text. 99fc81bb3 added the
     /// `stale_resolved`/`unhostable` exits and updated the census but
     /// not the HELP — the stale "ICE-ladder exhaustion" narration
     /// (wrong for 2 of 3 live values) mirrored verbatim into

@@ -1933,7 +1933,7 @@ mod tests {
     /// keys would otherwise leave `auth_attempted=false` → Drop logs it
     /// as a TCP probe, no metrics, no `r[gw.conn.cap]` enforcement.
     ///
-    /// Regression: at b62291b8 this assertion fails (auth_attempted
+    /// Regression: at fdb01df0 this assertion fails (auth_attempted
     /// stays false — the only `auth_*` override that skipped
     /// `mark_real_connection`).
     #[tokio::test]

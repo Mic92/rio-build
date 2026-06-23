@@ -38,7 +38,7 @@
 specs (
   {
     name rio
-    source_url https://github.com/lovesegfault/rio-build
+    source_url https://github.com/anthropics/rio
     include (
       docs/spec/**/*.typ
       // ADR-022/023 markdown ADR docs predate the typst migration.

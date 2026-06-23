@@ -11,7 +11,7 @@
 // re-run command remains valid against the retained model text.
 //
 // Stage-C calibration override, closure-evidence family F1,
-// permissiveness direction (corpus rep CE-1, 5dc6cc478 — TOCTOU between
+// permissiveness direction (corpus rep CE-1, a1375e5c7 — TOCTOU between
 // the gateway probe and the merge: the merge trusted the stale probe
 // verdict instead of re-checking the store, so a derivation whose
 // outputs were already all present was queued and built from source).

@@ -14,7 +14,7 @@
 //
 // Stage-C calibration override, closure-evidence family F9
 // (closure-hole breadcrumb integrity; wired family representative
-// re-routed within the family to CE-41, 9097b71cc — the poison-clear
+// re-routed within the family to CE-41, b183ffab5 — the poison-clear
 // paths, admin ClearPoison and the TTL sweep, removed an un-produced
 // child without stamping the surviving parents, the same laundering as
 // CE-40 via a different remover). The design's named reps CE-40
@@ -79,7 +79,7 @@ module closureCalibF9PoisonClearNoStamp {
 
   /// PRE-FIX poison clear (admin or TTL sweep): the poisoned node is
   /// removed and its row reset, but the surviving parents get no
-  /// closure-hole breadcrumb and no W4 intent (pre-9097b71cc). The A5
+  /// closure-hole breadcrumb and no W4 intent (pre-b183ffab5). The A5
   /// oracle is added at this site: a removal of an un-produced child
   /// with surviving parents that were not stamped in the same step.
   action calibPoisonClearNoStamp(d: str): bool = {

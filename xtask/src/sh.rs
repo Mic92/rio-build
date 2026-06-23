@@ -118,7 +118,7 @@ async fn run_inner(
         // buffered). The bail must carry the stderr tail so
         // text-matching retry classifiers (qa's
         // is_transient_gateway_err) and verdict checks (iso03) work
-        // under `-v` — same Error contract b4b7f29c7 established for
+        // under `-v` — same Error contract 66996a59a established for
         // the non-verbose path. Plain inherit can't capture;
         // piping-without-printing would buffer a long `nix build`'s
         // progress to nowhere; tee gives both.
@@ -256,7 +256,7 @@ pub fn run_benign_if(
 /// Run `cmd`, capture stdout+stderr, and return `(status, combined)`
 /// regardless of exit code or verbosity. For test assertions on a
 /// command's failure output: [`run`] folds the last 5 stderr lines
-/// into the `Err` only on the non-verbose path (`b4b7f29c7`), so a
+/// into the `Err` only on the non-verbose path (`66996a59a`), so a
 /// `-v` QA run gives a caller `{argv}: exit status: 1` and nothing
 /// else. This helper bypasses the verbose/inherit short-circuit
 /// entirely — it always pipes both streams and never `bail!`s on a
@@ -484,7 +484,7 @@ mod tests {
     async fn run_verbose_error_carries_stderr() {
         // The verbose path's bail must include the child's stderr so
         // text-matching retry classifiers (qa's is_transient_gateway_err)
-        // and verdict-shape checks (iso03) work under `-v`. b4b7f29c7
+        // and verdict-shape checks (iso03) work under `-v`. 66996a59a
         // fixed this for the non-verbose path; this asserts the verbose
         // path matches.
         //

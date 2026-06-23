@@ -2212,7 +2212,7 @@ pub const M_094: () = ();
 ///   (`batch_upsert_derivations`, rio-scheduler/src/db/batch.rs:105)
 ///   omits the column from its column list.
 /// - `git log --all -S 'UPDATE derivations SET tenant_id'
-///   --pickaxe-regex -- '*.rs'` → exactly a57034dd8 (branch-local,
+///   --pickaxe-regex -- '*.rs'` → exactly f6a159f83 (branch-local,
 ///   `#[cfg(test)]` fixtures only) and the slot-4 commit REMOVING
 ///   those fixtures; `origin/main` history has zero writers.
 /// - `.sqlx/` prepared queries and non-Rust sources carry no writer.

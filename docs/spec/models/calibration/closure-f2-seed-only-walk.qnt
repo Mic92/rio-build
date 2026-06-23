@@ -13,7 +13,7 @@
 //
 // Stage-C calibration override, closure-evidence family F2 (closure
 // incompleteness behind a "successful" substitution; corpus rep CE-9,
-// 808d82579 — try_substitute never walked narinfo.References, so the
+// bb653d760 — try_substitute never walked narinfo.References, so the
 // seed landed and its transitive references were missing in the builder
 // sandbox). Crosswalk row: closure-evidence-formal-design.md §4 "F2
 // CE-8..CE-11 → ENC (rep: CE-9) → B2"; 0d verdict: the VERDICT
@@ -73,7 +73,7 @@ module closureCalibF2SeedOnlyWalk {
 
   /// PRE-FIX walk finish: ok walks check and ingest only the seed's
   /// non-forgiven outputs; the REFS-descendant closure is ignored
-  /// (pre-808d82579: no References walk). Failed walks are unchanged.
+  /// (pre-bb653d760: no References walk). Failed walks are unchanged.
   action calibWalkFinishesSeedOnly(d: str): bool = {
     nondet idx = Set(0, 1).oneOf()
     nondet okPick = Set(true, false).oneOf()

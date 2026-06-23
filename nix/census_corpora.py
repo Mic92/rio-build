@@ -988,7 +988,7 @@ def check_duration_census(src_root, mint=False):
 # tree as the slots land them: GaveUpReset, the expiring
 # HoldClearance, the outbox reset edge, the per-plane refusal, the
 # poison terminal) UNION the [GEN-SET] grep grammar below over latch
-# idioms verified at 4ba130cf5:
+# idioms verified at 4de2df8ce:
 #   give-up-pred    — `attempts/deaths >= <CONST>` predicates
 #                     (candidate.rs blocks_respawn-class), const
 #                     captured through the qualification product

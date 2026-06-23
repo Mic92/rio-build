@@ -517,7 +517,7 @@ let
     # Eliminates builder-disk variance for airgap imports. Before:
     # containerd writes decompressed layers to ext4→qcow2→builder-disk;
     # cache=writeback helps but fsync still hits host fdatasync. Observed
-    # 3.3-5× tail variance on the SAME drv (076de36 commit msg: bitnami
+    # 3.3-5× tail variance on the SAME drv (9807e79 commit msg: bitnami
     # 29.5s vs 97s, rio-gateway 37s vs 130s — I/O-bound, ~10-12% CPU).
     # With tmpfs, writes are RAM-to-RAM; variance collapses to 9p-read +
     # decompress (CPU-bound, much tighter distribution).
@@ -986,7 +986,7 @@ rec {
     # (minimal kubelet pod infra) + rio-gateway (any one of the six
     # refs the seed registers — they all land from one import, so one
     # ref present ⇒ seed import done).
-    # timeout=240 post containerd-tmpfs fix (24c8537). Pre-tmpfs, agent
+    # timeout=240 post containerd-tmpfs fix (5fe68c4). Pre-tmpfs, agent
     # rio-controller import hit 170s vs 35-40s typical (5× builder-disk
     # tail). Tmpfs collapses that to CPU-bound decompress.
     for n in [k3s_server, k3s_agent]:

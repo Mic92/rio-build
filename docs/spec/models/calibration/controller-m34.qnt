@@ -10,7 +10,7 @@
 //     --invariant=<predicted> docs/spec/models/calibration/controller-m34.qnt
 
 // =========================================================================
-// CALIBRATION — pre-703cbf42a: the lease-acquire reload flag was cleared
+// CALIBRATION — pre-07960f77d: the lease-acquire reload flag was cleared
 // with swap(false) BEFORE the PG load, and the load's Err arm fell
 // through silently — so a transient PG error left the latch cleared (no
 // retry) and the next persist() wrote the stale standby-startup snapshot
@@ -63,7 +63,7 @@ module m34CalibLatchClearOnAttempt {
           { ...aged.get(k), pIdle: INotTracked,
             inflightTracked: if (loadOk) false else aged.get(k).inflightTracked }
         else aged.get(k))
-      // PRE-FIX (703cbf42a): the latch is cleared whether or not the load
+      // PRE-FIX (07960f77d): the latch is cleared whether or not the load
       // succeeded, and the stale in-memory snapshot is persisted over PG
       // on this same tick when it did not.
       val reloadStillPending = false
@@ -256,7 +256,7 @@ module m34CalibLatchClearOnAttempt {
 }
 
 // =========================================================================
-// CALIBRATION — pre-92a3dc47d (its recency-gate half): observe_registered
+// CALIBRATION — pre-f23eeed1e (its recency-gate half): observe_registered
 // had no recency window, so after a lease acquire cleared recorded_boot
 // every long-Registered node re-edged on the next tick — duplicate boot
 // samples and, worse, a `registered_cells` clear for every old node,
@@ -323,7 +323,7 @@ module m34CalibNoRecencyGate {
       val acquireWithInflight =
         reloadPending and CLAIMS.filter(k => claims.get(k).inflightTracked).size() > 0
       val observed = CLAIMS.mapBy(k => observeIdleToBusy(afterLatch.get(k)))
-      // PRE-FIX (92a3dc47d): the recency gate is gone.
+      // PRE-FIX (f23eeed1e): the recency gate is gone.
       val obsReg = CLAIMS.mapBy(k => observeRegisteredPreFix(observed.get(k)))
       val afterObs = CLAIMS.mapBy(k => obsReg.get(k)._1)
       val clears: Set[Cell] = CLAIMS.filter(k => obsReg.get(k)._2).map(k => afterObs.get(k).cell)

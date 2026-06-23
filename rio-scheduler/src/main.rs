@@ -72,7 +72,7 @@ async fn main() -> anyhow::Result<()> {
         shutdown.clone(),
     );
 
-    // F1 funnel (the fb2f42b57 shape): every `?`/`return` between
+    // F1 funnel (the 0dc20f5a3 shape): every `?`/`return` between
     // guard::spawn and .join() MUST be inside this block — the
     // post-await epilogue is the single discharge for guard_join
     // (sys.epilogue.drain; r26 irony-check on bug_023). The funnel

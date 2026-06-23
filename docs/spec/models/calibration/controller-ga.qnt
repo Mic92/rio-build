@@ -15,7 +15,7 @@
 //     --invariant=<predicted> docs/spec/models/calibration/controller-ga.qnt
 
 // =========================================================================
-// CALIBRATION — pre-fba9086dc: reap_excess_pending deleted on the
+// CALIBRATION — pre-6566579f9: reap_excess_pending deleted on the
 // informer-cached census alone (no live pod-phase re-check before the
 // DELETE). The informer's Job.status.ready lags the pod by ~tens of
 // seconds on cold start, so a Job whose pod had just started running was
@@ -126,7 +126,7 @@ module gaCalibNoLiveRecheck {
     val excessSelected = if (queuedKnown and excessOver > 0)
         oldestN(excessCandidates, jobsAtList, excessOver)
       else Set()
-    // PRE-FIX (fba9086dc): no live pod-phase re-check — the selected
+    // PRE-FIX (6566579f9): no live pod-phase re-check — the selected
     // excess set is deleted as-is, informer lag and all.
     val excessReaped = excessSelected
     val excessSuppressed = not(queuedKnown) and excessCandidates.size() > q
@@ -279,7 +279,7 @@ module gaCalibNoLiveRecheck {
 }
 
 // =========================================================================
-// CALIBRATION — pre-6c4f4983d (its C3 half): orphan_reap_gate treated a
+// CALIBRATION — pre-8efca33f0 (its C3 half): orphan_reap_gate treated a
 // successful-but-EMPTY ListExecutors response as an authoritative "no
 // executors exist", so a new scheduler leader (workers not yet
 // reconnected) licensed the orphan reap and Running Jobs whose workers
@@ -550,7 +550,7 @@ module gaCalibOrphanGateEmptyOk {
 }
 
 // =========================================================================
-// CALIBRATION — pre-8b0128f5a (the 94f3a91c state): when the NodeClaim
+// CALIBRATION — pre-4a960254e (the 94f3a91c state): when the NodeClaim
 // CRD is absent the gate match arm returned `true`, so spawn passed
 // through ungated AND `gate_armed=true` made `queued` count as known —
 // reap_excess_pending ran against an ungated queue and deleted the
@@ -626,7 +626,7 @@ module gaCalibCrdAbsentArmed {
                  else currentQueue
     val schedErr = pollFails
 
-    // PRE-FIX (8b0128f5a): crd-absent arms the gate.
+    // PRE-FIX (4a960254e): crd-absent arms the gate.
     val gr = gateRetainPreFix(CRD_PRESENT, IS_BUILDER, gate, polled)
     val gateArmed = gr._1
     val postGate = gr._2

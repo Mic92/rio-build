@@ -591,7 +591,7 @@ store:
     # History (live_061-R4): the round-6 rejection of n=64 was a
     # WHOLE-GATE occupancy argument (pre-split, full worker occupancy
     # saturated the shared admission gate and self-parked on
-    # RESOURCE_EXHAUSTED). The structural P=cap/2 split (e77b67e7c)
+    # RESOURCE_EXHAUSTED). The structural P=cap/2 split (37ea2b7ca)
     # retired that premise — a future raise is gate-safe by
     # construction and only pool-bound: n=32=P here means full-fleet
     # claim occupancy exactly saturates the path-slot pool; past P,

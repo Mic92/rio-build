@@ -13,9 +13,9 @@
 // Stage-C calibration override, closure-evidence family F14
 // (Substituting-status lifecycle / stuck states; wired family
 // representative re-routed within the family to the CE-48(i) shape,
-// 59f173225 — a recovered Substituting node re-entered the DAG with no
+// 7f3b84547 — a recovered Substituting node re-entered the DAG with no
 // walk anywhere and no legal transition, stuck forever; the design's
-// named rep CE-52 d129eb820 is the Poisoned-at-limit re-probe lane,
+// named rep CE-52 5a2884dac is the Poisoned-at-limit re-probe lane,
 // whose stuck cell the post-ladder model absorbs into the merge-time
 // reset, so it cannot falsify a state invariant here — the re-route and
 // that argument are recorded in the invariant map's Phase 0d

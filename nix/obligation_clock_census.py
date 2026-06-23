@@ -74,7 +74,7 @@ import rust_strip
 # pass) requires every row anchored and resolving.
 # Landed rows carry (state, slot, file, anchor-regex, drop-audit);
 # check_landed resolves every anchor in its file — rot reds. Flipped
-# at the wave-close --verify-landed pass (bw12, dfd3afb2b+19): each
+# at the wave-close --verify-landed pass (bw12, 4c391788c+19): each
 # anchor grep-verified at the composed tree before the flip; the
 # RetransmitBuffer NAME from the relay pack resolved by CONTENT per
 # (xxxxx) — the landed discharge is `discharge_through(DurableFrontier)`

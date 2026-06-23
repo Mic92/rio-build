@@ -10,8 +10,8 @@
 // stale-skip production trace), not a single-commit revert.
 //
 // Family disposition of the commits NOT carried by an override module:
-//   - `dd5c11376` (M_033) — ENC, refcountCalibG3CounterAsPresence below.
-//   - `b1c7a9497` — ENC-A: the pre-fix re-query race (the dedup verdict
+//   - `791c746f7` (M_033) — ENC, refcountCalibG3CounterAsPresence below.
+//   - `f00fbaa8d` — ENC-A: the pre-fix re-query race (the dedup verdict
 //     read in a separate statement after the upsert) only loses data
 //     under the counter-as-presence semantics this family reverts; at
 //     model resolution both shapes produce the same harm state — a
@@ -20,15 +20,15 @@
 //     The atomicity content (verdict computed in the same statement as
 //     the upsert) is what the as-built upgradeManifest encodes and what
 //     the surviving store.cas.upsert-inserted+2 rule pins.
-//   - `127168477` — NOT-ENCODED (set-collapsed chunk_list and SQL-error
+//   - `f8297d284` — NOT-ENCODED (set-collapsed chunk_list and SQL-error
 //     granularity; pre-registered per-commit exception, design §3.4 —
 //     covered by the upsert dedup unit test and the manifest_deserialize
 //     fuzz target).
-//   - `00fd5b12d` — SUBSUMED: the PutChunk RPC that failed to set
-//     uploaded_at was deleted (c5bb34612); the subject no longer exists.
+//   - `67de7b570` — SUBSUMED: the PutChunk RPC that failed to set
+//     uploaded_at was deleted (363012d0c); the subject no longer exists.
 
 // =========================================================================
-// CALIBRATION — pre-dd5c11376 (M_033): the needs-upload verdict is keyed
+// CALIBRATION — pre-791c746f7 (M_033): the needs-upload verdict is keyed
 // on the liveness record instead of confirmed backend presence — a chunk
 // whose row already exists is "already uploaded by someone else", so the
 // writer skips the PUT. The historical harm (2026-04-06 production data
@@ -48,7 +48,7 @@
 // VERDICT ROWS (Stage-C, relocated from the retired refcount invariant
 // map; full table with the NOT-ENC/SUBS dispositions:
 // docs/spec/models/refcount-records.md):
-// - refcountCalibG3CounterAsPresence (dd5c11376 / M_033, ENC): FALSIFIES
+// - refcountCalibG3CounterAsPresence (791c746f7 / M_033, ENC): FALSIFIES
 //   cr4PresenceFromConfirmedUpload @ calibStep (depth 4, 1,602/145) and
 //   cr1NoLiveChunkCollected @ calibStep (depth 7, 115,050/7,014) — two
 //   concurrent writers of the same content; the loser skips the PUT
@@ -61,7 +61,7 @@
 //   counterexample, and the documented I-040 reap-then-stale-skip shape
 //   is pinned deterministically by g3JointStaleSkipRun. Baseline:
 //   contend-regime constants verbatim (Stage-B exhaustive HOLDS).
-// - ENC-A by analogy: b1c7a9497 covered by
+// - ENC-A by analogy: f00fbaa8d covered by
 //   refcountCalibG3CounterAsPresence (the re-query race only loses data
 //   under counter-as-presence semantics; same harm state).
 module refcountCalibG3CounterAsPresence {
@@ -135,8 +135,8 @@ module refcountCalibG3CounterAsPresence {
 }
 
 // =========================================================================
-// CALIBRATION — the pre-registered G2×G3 joint revert (e5bdbff1b +
-// dd5c11376 together): the I-040 stale-skip production trace. The
+// CALIBRATION — the pre-registered G2×G3 joint revert (ef3ceb2bd +
+// 791c746f7 together): the I-040 stale-skip production trace. The
 // inline-only reap leaves a stale refcount behind a deleted manifest;
 // the counter-as-presence dedup then reads that stale record as "someone
 // else uploaded this" and skips the PUT the chunk actually needs.
@@ -161,7 +161,7 @@ module refcountCalibG3JointStaleSkip {
     GRACE_TICKS = 1
   ).* from "../chunkLiveness"
 
-  /// PRE-FIX owner-side reap (the e5bdbff1b half): manifest rows
+  /// PRE-FIX owner-side reap (the ef3ceb2bd half): manifest rows
   /// deleted, chunk accounting untouched. Same encoding as
   /// refcountCalibG2ReapInlineOnly.
   action reapByClaimInlineOnly(u: int): bool = {
@@ -182,7 +182,7 @@ module refcountCalibG3JointStaleSkip {
     }
   }
 
-  /// PRE-FIX upgrade transaction (the dd5c11376 half): presence inferred
+  /// PRE-FIX upgrade transaction (the 791c746f7 half): presence inferred
   /// from the liveness record. Same encoding as
   /// refcountCalibG3CounterAsPresence.
   action upgradeManifestCounterDedup(u: int, list: Set[int]): bool = {

@@ -1873,7 +1873,7 @@ pub(super) async fn cancel_closed_attempt_jobs(
 pub(super) enum SpawnOutcome {
     Spawned,
     /// 409 AlreadyExists — Job for this `intent_id` already exists
-    /// (deterministic name = intentional dedupe, 9ff95c7). The
+    /// (deterministic name = intentional dedupe, 2ff2cfe). The
     /// `skip_existing` pre-filter in `spawn_for_each` makes this the
     /// rare list-race fallback. Not worth propagating — would trigger
     /// error_policy backoff for what is expected-noise.
@@ -2198,7 +2198,7 @@ pub(super) fn pod_termination_reason(pod: &Pod) -> TerminationReason {
 /// renders every upstream format, so kubelet grammar drift flips a
 /// test instead of silently inflating `shape=other` (the inherited
 /// needle set was hand-enumerated from the implementation's own
-/// fixtures and had already missed a grammar once — 2acd1b32's
+/// fixtures and had already missed a grammar once — 1c4422c0's
 /// string mismatch, the recurrent class).
 pub(super) const POD_ATTRIBUTED_NEEDLES: [&str; 3] = [
     // emptyDirMessageFmt:
@@ -3030,7 +3030,7 @@ mod tests {
         // Kubelet's per-pod ephemeral-storage limit eviction message
         // (the production firefox I-213 case). VERBATIM from live
         // cluster — ends with the limit value, NOT the resource name;
-        // the original 2acd1b32 fixture ended in "ephemeral-storage"
+        // the original 1c4422c0 fixture ended in "ephemeral-storage"
         // and matched by accident.
         assert_eq!(
             pod_termination_reason(&pod_evicted(

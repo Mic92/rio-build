@@ -2,7 +2,7 @@
 //
 // Stage-C calibration override, closure-evidence family F1, soundness
 // direction (phantom cache-hit / stale-Completed; corpus rep CE-2,
-// 29f0a8afa I-047 — a pre-existing Completed node whose outputs were no
+// 898d0d4b4 I-047 — a pre-existing Completed node whose outputs were no
 // longer wanted-complete unlocked dependents, which were then
 // dispatched against missing inputs). Crosswalk row:
 // closure-evidence-formal-design.md §4 "F1 CE-2, CE-5(ii), CE-6 → ENC

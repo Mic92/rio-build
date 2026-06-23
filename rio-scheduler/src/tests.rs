@@ -194,7 +194,7 @@ fn sla_globals_unset_in_toml_extract_as_none() {
 /// table that every config-loaded source (helm scheduler.toml,
 /// VM-test `extraSchedulerConfig.extraConfig`) must provide.
 ///
-/// Tripwire for the defaults-baseline drift class: pre-3c16e0806,
+/// Tripwire for the defaults-baseline drift class: pre-96f5402bd,
 /// `Config::default()` used [`SlaConfig::test_default`]
 /// (`max_cores: Some(16.0)`, `hw_classes: {test-hw}`), which let a
 /// TOML-less scheduler boot silently. That masked 8 standalone

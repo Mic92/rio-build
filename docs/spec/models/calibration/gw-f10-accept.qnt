@@ -8,7 +8,7 @@
 // extend-and-override pattern as gw-f1-capacity.qnt.
 //
 // Candidate carried by this file:
-//   - GW-19 (9b693441f)  gwCalibF10AcceptErrorFatal -> s18
+//   - GW-19 (3c13af9b5)  gwCalibF10AcceptErrorFatal -> s18
 //
 // Run (serially, from the repo root):
 //   quint verify --backend=tlc --main=gwCalibF10AcceptErrorFatal \
@@ -16,7 +16,7 @@
 //     docs/spec/models/calibration/gw-f10-accept.qnt
 
 // =========================================================================
-// CALIBRATION — pre-9b693441f (GW-19): a transient accept(2) error
+// CALIBRATION — pre-3c13af9b5 (GW-19): a transient accept(2) error
 // (ECONNABORTED, EMFILE under load) propagated out of run(); main exited
 // past the session drain and every live session was aborted with it. The
 // pre-fix letter below terminates the listener and the process at the
@@ -42,7 +42,7 @@
 //   no-op by construction), so the override is necessarily a latch-setter;
 //   the pinned counterexample exits the process with a live connection up,
 //   making the structural consequence (the corpus's "all live sessions
-//   aborted", the L4 form) visible in the same trace (9b693441f).
+//   aborted", the L4 form) visible in the same trace (3c13af9b5).
 // - BASELINE: gwCalibF10AsBuilt (GW-19) 49,315 distinct / 44 s — HOLDS
 //   allInvariants.
 module gwCalibF10AcceptErrorFatal {

@@ -284,7 +284,7 @@ module spawnCoherence {
   const ENABLE_CANCEL_ASBUILT: bool
   const ENABLE_CANCEL_CAUSE: bool
   /// C2 area-C axis (merged_bug_221): true = the as-built reap with NO
-  /// leader-age gate (the c473655f4 pin's behavior). All pre-C2
+  /// leader-age gate (the df2f536dc pin's behavior). All pre-C2
   /// regimes bind false and keep the gate — state-space identical.
   const ENABLE_YOUNG_LEADER_REAP: bool
   /// C2 area-D axis pair (merged_bug_135): SYNTH turns on the
@@ -404,7 +404,7 @@ module spawnCoherence {
   /// now Incomplete the page reads `Unknowable` and the arm suspends
   /// (the rust-side `q1-orphan-pending` change).
   ///
-  /// MODEL-DIVERGENCE(law=ctrl.ephemeral.reap-terminal-absent; tree=rio-controller/src/reconcilers/pool/jobs.rs:reap_stale_for_intents): the `AttemptsViewWitness::fetch` fail-closed `break` (the ListOpenAttempts RPC) is below the model's per-RPC fault alphabet ({pollFails, listExecFails, ackFails, createFailsFor}); `not(schedErr)` encodes ONLY the GetSpawnIntents-failure suspension. The two-tick strike is below per-tick atomicity (the 5e01a9ff1 disposition) — retarget-by: adding a ListOpenAttempts fault bit or modeling the strike ledger.
+  /// MODEL-DIVERGENCE(law=ctrl.ephemeral.reap-terminal-absent; tree=rio-controller/src/reconcilers/pool/jobs.rs:reap_stale_for_intents): the `AttemptsViewWitness::fetch` fail-closed `break` (the ListOpenAttempts RPC) is below the model's per-RPC fault alphabet ({pollFails, listExecFails, ackFails, createFailsFor}); `not(schedErr)` encodes ONLY the GetSpawnIntents-failure suspension. The two-tick strike is below per-tick atomicity (the f27f6dba2 disposition) — retarget-by: adding a ListOpenAttempts fault bit or modeling the strike ledger.
   const ENABLE_UNREPORTED_DEATH: bool
   const ENABLE_TERMINAL_ABSENT_REAP: bool
 

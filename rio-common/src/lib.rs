@@ -11,7 +11,7 @@
 //! contract, the clamped wire types, the transport bounds), and
 //! rustdoc attachment is positional — an edit inserting an item
 //! between a doc block and its item silently re-targets a
-//! load-bearing contract (hit twice: e163c2d77, then the
+//! load-bearing contract (hit twice: f4dcf9693, then the
 //! `saturating_wanted_union` splice). Under the deny, a doc-detached
 //! pub item is a COMPILE ERROR at the splice commit instead of a
 //! silent contract re-target.

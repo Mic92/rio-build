@@ -12,7 +12,7 @@
 // re-run command remains valid against the retained model text.
 //
 // Stage-C calibration override, closure-evidence family F8
-// (must_substitute enforcement; corpus rep CE-33, 7e1092575 — the
+// (must_substitute enforcement; corpus rep CE-33, 721adbde2 — the
 // post-failover childless pruned root was probed, found definitively
 // missing-and-unsubstitutable, left Ready and dispatched from source,
 // ENOENT on never-merged inputDrvs). Crosswalk row:
@@ -77,7 +77,7 @@ module closureCalibF8DispatchNoEvidence {
 
   /// PRE-FIX from-source admission: no must_substitute interlock, no
   /// probed-this-pass requirement — any Ready node with live interest
-  /// and a free attempt slot is delivered (pre-7e1092575 / pre-interlock
+  /// and a free attempt slot is delivered (pre-721adbde2 / pre-interlock
   /// admit_pull). Latches unchanged (the as-built oracle).
   action calibAttemptOpenNoEvidenceGate(d: str): bool = all {
     leaderActive,

@@ -1390,7 +1390,7 @@ pub(crate) struct CreatedJob {
 /// single re-arm at the beat arm's completion (post-await) are the
 /// only mint sites, so a second raw `Instant::now()` inside the
 /// handler is structurally absent (pinned by the handler-region
-/// census in the test battery). Wave-8's faac1261e re-pointed only
+/// census in the test battery). Wave-8's a08d5a740 re-pointed only
 /// the prune/members reads to a post-await clock; the Phase-3
 /// claimability serve filter and the caller's contact stamp stayed
 /// on the pre-await one — on a slow beat a backoff lapsing during
@@ -1550,7 +1550,7 @@ impl DagActor {
                     // whole tail of the pass (caller re-note, prune,
                     // members, steal-horizon, the Phase-3 serve
                     // filter) reads this one post-await clock.
-                    // faac1261e's correction covered only
+                    // a08d5a740's correction covered only
                     // prune/members; the serve filter stayed
                     // pre-await (a backoff lapsing during the query
                     // was withheld a poll) and the contact stamp ran

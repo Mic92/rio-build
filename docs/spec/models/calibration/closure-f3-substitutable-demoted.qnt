@@ -12,7 +12,7 @@
 //
 // Stage-C calibration override, closure-evidence family F3,
 // permissiveness direction (available treated as unavailable; corpus
-// members CE-3 18df83e02 / CE-60 d6dd46edd — a probe that lost its
+// members CE-3 e933bd1fb / CE-60 7d6068494 — a probe that lost its
 // substitutable component routed upstream-available work to from-source
 // builds). The §4 both-directions clause for the permissiveness
 // families (F1, F3, F6, the C-group) is discharged for F3 by this

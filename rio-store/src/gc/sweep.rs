@@ -1927,7 +1927,7 @@ mod tests {
 
         // Names chosen so hash(Z) < hash(Y): old MIN(d) tied Y and Z
         // at depth 1, hash-tiebreak put Z FIRST → assertion fails on
-        // d30227bd. (With "diamond-y"/"diamond-z" hash(Y) < hash(Z)
+        // b8c147f0. (With "diamond-y"/"diamond-z" hash(Y) < hash(Z)
         // and the test was vacuous.)
         let z = test_store_path("diamond-z0");
         let z_hash = StoreSeed::raw_path(&z).seed(&db.pool).await;
@@ -1982,7 +1982,7 @@ mod tests {
     /// bug_102: K stacked diamonds → previous `UNION ALL` + per-row
     /// `visited[]` CTE enumerated 2^K walks (exponential). Kahn is
     /// O(nodes+edges); 20 stacked diamonds (40 nodes, 60 edges) must
-    /// complete well under 5s. On d30227bd this materialized 2^20 ≈ 1M
+    /// complete well under 5s. On b8c147f0 this materialized 2^20 ≈ 1M
     /// rows × ~1.2KB visited[] each.
     #[tokio::test]
     async fn select_sweep_order_stacked_diamonds_linear() {

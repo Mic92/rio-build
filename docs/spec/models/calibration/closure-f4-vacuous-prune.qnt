@@ -11,7 +11,7 @@
 // re-run command remains valid against the retained model text.
 //
 // Stage-C calibration override, closure-evidence family F4 (vacuous
-// wanted-set verdicts; corpus rep CE-13, 855ebb6fa — a bogus output
+// wanted-set verdicts; corpus rep CE-13, 82bfa6cba — a bogus output
 // selector resolved to no concrete path, the prune's availability
 // forall was vacuously true, the prune fired and the childless root was
 // dispatched from source). Crosswalk row:

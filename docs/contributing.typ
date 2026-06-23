@@ -16,7 +16,7 @@ automatically.
 == Setup
 
 ```bash
-git clone https://github.com/lovesegfault/rio-build.git
+git clone https://github.com/anthropics/rio.git
 cd rio-build
 
 # Enter the dev shell (if direnv isn't set up)

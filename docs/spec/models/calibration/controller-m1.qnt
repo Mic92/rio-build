@@ -11,7 +11,7 @@
 //     --invariant=<predicted> docs/spec/models/calibration/controller-m1.qnt
 
 // =========================================================================
-// CALIBRATION — pre-79f86b888: prev_idle.clear() lived inside the
+// CALIBRATION — pre-0d85b5933: prev_idle.clear() lived inside the
 // lease-acquire reload's Ok arm only. When the PG load FAILED, the loop
 // fell through to reconcile_once with the previous tenure's prev_idle
 // intact, and observe_idle_to_busy's or_insert is a no-op on a present
@@ -58,7 +58,7 @@ module m1CalibAcquireClearOkOnly {
       val aged = CLAIMS.mapBy(k => ageWallclock(claims.get(k)))
       val gateAfterLose = if (losePending) false else placeableArmed
       val loadOk = reloadPending and not(pgLoadFails)
-      // PRE-FIX (79f86b888): prev_idle survives a failed reload.
+      // PRE-FIX (0d85b5933): prev_idle survives a failed reload.
       val afterLatch = CLAIMS.mapBy(k =>
         if (reloadPending)
           { ...aged.get(k),
@@ -270,7 +270,7 @@ module m1CalibAcquireClearOkOnly {
 }
 
 // =========================================================================
-// CALIBRATION PROBE — 13806e99a (the reap_idle busy-guard half). The fix
+// CALIBRATION PROBE — f847e734e (the reap_idle busy-guard half). The fix
 // added a requested>0 guard directly to reap_idle, defending against a
 // prev_idle entry that survives into a tick where the node is busy. At
 // the model's resolution that state is unreachable: observe_idle_to_busy
@@ -380,7 +380,7 @@ module m1CalibReapBusyGuardProbe {
       val ackOk = ackPayload and not(ackFails)
       val iceMaskedAfter = if (ackOk) iceMasked.union(marksThisTick).exclude(clears) else iceMasked
       val clearOfMasked = ackOk and clears.intersect(iceMasked).size() > 0
-      // PRE-FIX (13806e99a): the reap predicate drops the idle-now
+      // PRE-FIX (f847e734e): the reap predicate drops the idle-now
       // busy-guard.
       val idleReaped = CLAIMS.filter(k =>
         val c = afterObs.get(k)

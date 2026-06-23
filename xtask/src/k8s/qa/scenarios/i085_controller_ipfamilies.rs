@@ -4,7 +4,7 @@
 //! Fix dropped the field. Regression check: no Service in any rio
 //! namespace carries `ipFamilies` longer than the cluster supports
 //! (single-stack v6 → length 1). The chart hardcodes `[IPv6]` per
-//! `e939b058`; controller-emitted Services should either omit it or
+//! `b740fd03`; controller-emitted Services should either omit it or
 //! match.
 
 use std::time::Duration;

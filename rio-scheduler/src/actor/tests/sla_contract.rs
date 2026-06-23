@@ -2227,7 +2227,7 @@ async fn contract_h_explore_stable_across_inputs_gen_churn() {
 ///
 /// 4-poll falsification (τ=0.15 → τ_enter=1.15, τ_stay=1.195):
 /// 1. od/spot=1.14 → 2 terms ({spot,od}); writes pinned_explore_a.
-/// 2. od/spot=1.16 (deadband) → STILL 2 terms. **Red @ 4434b117**:
+/// 2. od/spot=1.16 (deadband) → STILL 2 terms. **Red @ b283a0d7**:
 ///    `prev_a=∅` → τ_enter applies → 1.16>1.15 → 1 term.
 /// 3. od/spot=1.20 → 1 term ({spot}).
 /// 4. od/spot=1.18 (deadband) → STILL 1 term. **Red against the
@@ -2359,7 +2359,7 @@ async fn contract_h_explore_schmitt_carries_prev_a() {
             .len(),
         2,
         "poll 2: od/spot=1.16 in deadband; prev_a={{spot,od}} from poll 1 → \
-         od τ_stay=1.195 → 2 terms. bug_014 @ 4434b117: snapshot.rs passed \
+         od τ_stay=1.195 → 2 terms. bug_014 @ b283a0d7: snapshot.rs passed \
          prev_a=∅ → τ_enter=1.15 → 1.16>1.15 → 1 term."
     );
 
@@ -2419,7 +2419,7 @@ async fn contract_h_explore_schmitt_carries_prev_a() {
 ///    `Feasible{spot}`, all-masked → `Miss`. **Fresh A'={spot}**.
 ///    Intent falls through to unrestricted memo (h_main present).
 /// 3. clear ICE; od/spot=1.18 (deadband) → **1 term**. **Red @
-///    36804895**: `Miss` carried only `next`; `next==prev_pin` →
+///    14b2eea9**: `Miss` carried only `next`; `next==prev_pin` →
 ///    committed stale `{spot,od}` from poll 1 → od τ_stay → 2 terms.
 /// 4. od/spot=1.14 → `Hit{spot,od}`. Re-seeds prev_a={spot,od}.
 /// 5. h_exp menu → no-fit (cores=0) → restricted `BestEffort` →
@@ -2571,7 +2571,7 @@ async fn contract_h_explore_schmitt_across_ice_mask() {
         1,
         "poll 3: od/spot=1.18 in deadband; prev_a={{spot}} from poll 2's \
          Feasible-all-masked Miss → od τ_enter=1.15 → 1.18>1.15 → 1 term. \
-         bug_001 @ 36804895: `_ =>` arm dropped `m.a.cells`; \
+         bug_001 @ 14b2eea9: `_ =>` arm dropped `m.a.cells`; \
          `next==prev_pin` committed STALE {{spot,od}} from poll 1 → od \
          τ_stay=1.195 → 2 terms."
     );
@@ -3263,7 +3263,7 @@ async fn contract_spawn_intents_order_deterministic_across_ties() {
     let b = order(&build());
 
     // (a) determinism: two independent actors (own RandomState each)
-    // emit identical intent_id order. At ad5d288e: tied-prio Ready
+    // emit identical intent_id order. At 0f107e14: tied-prio Ready
     // entries iter differently across the two HashMaps → fails.
     assert_eq!(
         a, b,
@@ -3534,7 +3534,7 @@ async fn contract_bypass_capacity_oversized_cores_emits_hosting_class() {
 /// derivation carried is discarded entirely.
 ///
 /// Fixture: intel-6 max_cores=16; intel-7/8 stay at the global 64;
-/// `min_cores=32`. RED at `0c4c55d5b`: intel-6 ∈ hw_class_names
+/// `min_cores=32`. RED at `215acde83`: intel-6 ∈ hw_class_names
 /// (`features_compatible([], [])` admits it post-strip;
 /// `class_ceilings(intel-6)=16 ≥ intent.cores` so the post-finalize
 /// `retain_hosting_cells` chokepoint keeps it).
@@ -4078,7 +4078,7 @@ async fn contract_fod_capacity_override_routes_to_fetcher() {
 /// override forces `cores` over `sla_ceilings.max_cores` (256 vs the
 /// `test_hw_sla_config` ceiling of 64) instead of pinning `--capacity`.
 ///
-/// RED at 938f2a957: `intent.hw_class_names == []`.
+/// RED at 6097897a4: `intent.hw_class_names == []`.
 /// GREEN after the pre-clamp: `intent.hw_class_names == ["fetcher-x86"]`.
 #[tokio::test]
 async fn contract_overcap_cores_override_still_routes_featured_intent() {

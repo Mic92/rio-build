@@ -1470,7 +1470,7 @@ impl DagActor {
         }
         // One store probe for the whole batch. The probe helper lives
         // in recovery.rs but its post-failover reconcile caller was
-        // deleted at d44fea0b4 — this is now its SOLE caller.
+        // deleted at ae6a3bd61 — this is now its SOLE caller.
         let probe_paths: Vec<String> = expired
             .iter()
             .filter_map(|(a, _)| self.dag.node(a.drv_hash.as_str()))

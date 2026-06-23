@@ -10,9 +10,9 @@
 // pattern as gw-f1-capacity.qnt.
 //
 // Candidates carried by this file:
-//   - GW-5 (9739aca65)            gwCalibF4ForgedCloseDecrements -> s7
-//   - GW-6 (719f99809)            gwCalibF4BoundOnSessionsMap    -> s7
-//   - GW-7 (2cd23d940/eef1fbd8d)  gwCalibF4RefusePolitely        -> s14
+//   - GW-5 (3ac6b0a65)            gwCalibF4ForgedCloseDecrements -> s7
+//   - GW-6 (4de33282f)            gwCalibF4BoundOnSessionsMap    -> s7
+//   - GW-7 (d21a6e06f/4aee1d500)  gwCalibF4RefusePolitely        -> s14
 //
 // Run (serially, from the repo root):
 //   quint verify --backend=tlc --main=<module> --step=calibStep \
@@ -20,7 +20,7 @@
 //     docs/spec/models/calibration/gw-f4-channel-accounting.qnt
 
 // =========================================================================
-// CALIBRATION — pre-9739aca65 (GW-5): russh dispatches callbacks for any
+// CALIBRATION — pre-3ac6b0a65 (GW-5): russh dispatches callbacks for any
 // well-formed channel id; channel_close decremented `open_channels`
 // unconditionally, and exec was honored on channels that were never
 // accepted. Forged/duplicate closes hold the counter near zero while
@@ -40,17 +40,17 @@
 // Stage-C record):
 // - GW-5 gwCalibF4ForgedCloseDecrements: FALSIFIES S7 @ 3 (97/27) — a
 //   forged/duplicate CHANNEL_CLOSE on a connection with no accepted channel
-//   decrements open_channels below the accepted-set size (9739aca65's
+//   decrements open_channels below the accepted-set size (3ac6b0a65's
 //   unguarded decrement); the module also carries the exec-on-never-
 //   accepted-channel arm.
 // - GW-6 gwCalibF4BoundOnSessionsMap (MAX_CHANNELS_PER_CONN = 1): FALSIFIES
 //   S7 @ 6 (1,469/110) — two opens both pass the pre-fix bound check (it
 //   reads the exec'd-sessions map, empty before any exec); the accepted-
-//   open count exceeds the bound (719f99809 burst-open-then-exec).
+//   open count exceeds the bound (4de33282f burst-open-then-exec).
 // - GW-7 gwCalibF4RefusePolitely (MAX_CHANNELS_PER_CONN = 1): FALSIFIES S14
 //   @ 4 (733/68) — two politely-refused opens leave residue 2 > 1: the pre-
 //   fix Ok(false) path retains russh channel-table state and the connection
-//   survives (2cd23d940 / eef1fbd8d); the pre-auth position of the opens is
+//   survives (d21a6e06f / 4aee1d500); the pre-auth position of the opens is
 //   the as-built attempt letter's own enabling condition.
 // - BASELINES: gwCalibF4AsBuilt (GW-5) 52,870 / 44 s;
 //   gwCalibF4AsBuiltChanCap1 (GW-6, GW-7) 18,445 / 45 s — both HOLD
@@ -124,7 +124,7 @@ module gwCalibF4ForgedCloseDecrements {
 }
 
 // =========================================================================
-// CALIBRATION — pre-719f99809 (GW-6): the per-connection channel bound was
+// CALIBRATION — pre-4de33282f (GW-6): the per-connection channel bound was
 // checked at channel_open against the exec'd-sessions map (`sessions.len()`)
 // while the resource is allocated at the open — a burst of N opens (each
 // seeing len()==0) followed by N execs defeats the bound.
@@ -190,7 +190,7 @@ module gwCalibF4BoundOnSessionsMap {
 }
 
 // =========================================================================
-// CALIBRATION — pre-2cd23d940 / pre-eef1fbd8d (GW-7): an over-bound or
+// CALIBRATION — pre-d21a6e06f / pre-4aee1d500 (GW-7): an over-bound or
 // non-`session` channel open was refused politely (`Ok(false)`) instead of
 // terminating the connection — russh registers channel-table state before
 // consulting the handler and never frees it for a refused open, so the

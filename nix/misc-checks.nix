@@ -483,7 +483,7 @@ in
   # repo's standard for f64 sort keys — `partial_cmp().unwrap_or(Equal)`
   # is a non-total comparator (NaN compares Equal to everything, which
   # driftsort can panic on or silently mis-order). The snapshot.rs
-  # spawn-intent close (cc20603) declared the standard but the done-gate
+  # spawn-intent close (cf4723e) declared the standard but the done-gate
   # rg sweep was never run; ingest.rs/alpha.rs/hw.rs each carried the
   # shape. The pattern is multiline (hw.rs's nested-paren arg spans two
   # lines) and matches both `unwrap_or` and `unwrap_or_else`; `[^;]*?`
@@ -2492,7 +2492,7 @@ in
         # was PRICED as "absorbed by … (CreateFleet|Karpenter)
         # batching", which DID NOT account for `cluster.Synced()`.
         # Verification grep (per CLAUDE.md narrowing-record duty):
-        #   grep -rn -E 'absorbed by .{0,80}(CreateFleet|Karpenter) batching' docs/ @ 368e279cf
+        #   grep -rn -E 'absorbed by .{0,80}(CreateFleet|Karpenter) batching' docs/ @ 87dde788e
         #   → docs/spec/components/sla-sizing.typ:867:… `CreateFleet` rate pressure is absorbed by Karpenter batching …
         #   → docs/spec/components/sla-sizing.typ:1180:… absorbed by … Karpenter's CreateFleet batching …
         # The hard-wrapped sibling at controller.typ:1970-1971
@@ -2503,7 +2503,7 @@ in
         # sh-045: "the witnessed lane carries no" — the line-stable token of
         # the now-false design claim (the longer "…no `cpu_seconds`" straddled
         # a line-wrap and was vacuously 0 at base). Verified narrowing record
-        # @ fd861de43:
+        # @ 704c048b5:
         #   $ rg -nF 'the witnessed lane carries no' rio-scheduler/src/actor/floor.rs
         #   347:    /// specific witnessed letter, the witnessed lane carries no
         # → 1 hit (deleted at c4).

@@ -6,12 +6,12 @@
 // carries a deadline (gw-session corpus §3 F9, design §3.4 GW-16; verdicts
 // in the VERDICT block at the end of this header).
 // Same extend-and-override pattern as gw-f1-capacity.qnt. The calibration
-// target is the rpc-wait deadline 755f49744 added; the build-event wait is
+// target is the rpc-wait deadline 744efa31b added; the build-event wait is
 // deliberately deadline-free (design §2a) and is NOT part of this family's
 // claim.
 //
 // Candidate carried by this file:
-//   - GW-16 (755f49744, +0f5408e11-C3, 5bc482e52)
+//   - GW-16 (744efa31b, +6d27d68c9-C3, 3af187f2b)
 //     gwCalibF9RpcWaitNoDeadline -> l6
 //
 // Run (serially, from the repo root):
@@ -20,7 +20,7 @@
 //     docs/spec/models/calibration/gw-f9-upstream-deadline.qnt
 
 // =========================================================================
-// CALIBRATION — pre-755f49744 (GW-16): store/scheduler awaits inside the
+// CALIBRATION — pre-744efa31b (GW-16): store/scheduler awaits inside the
 // session handlers carried no deadline — a stalled upstream parked the
 // session (and its channel and buffers) indefinitely.
 // PREDICTED: l6RpcWaitDeadlineArmed falsifies at the first un-deadlined
@@ -36,7 +36,7 @@
 // Stage-C record):
 // - GW-16 gwCalibF9RpcWaitNoDeadline: FALSIFIES L6 @ 10 (1,592/81) — an
 //   upstream RPC await issued without a deadline falls at the first un-
-//   deadlined rpc-wait entry (755f49744).
+//   deadlined rpc-wait entry (744efa31b).
 // - BASELINE: gwCalibF9AsBuilt (GW-16) 1,204,287 distinct / 120 s — HOLDS
 //   allInvariants.
 module gwCalibF9RpcWaitNoDeadline {

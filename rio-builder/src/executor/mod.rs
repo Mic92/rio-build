@@ -779,8 +779,8 @@ pub async fn execute_build(
         // Strict UTF-8 — matches the else-branch (parse_from_nar uses
         // strict from_utf8 at derivation/mod.rs:168). Lossy would silently
         // produce U+FFFD → ATerm parse fails with a confusing "unexpected
-        // character" instead of the real UTF-8 error. P0017's 2f807a4
-        // eliminated this pattern; 395e826f reintroduced it one day after
+        // character" instead of the real UTF-8 error. P0017's 345a286
+        // eliminated this pattern; 2c43bef8 reintroduced it one day after
         // P0020 closed. Clippy disallowed-methods (P0290) prevents round 3.
         let parsed = std::str::from_utf8(&assignment.drv_content)
             .map_err(|e| {

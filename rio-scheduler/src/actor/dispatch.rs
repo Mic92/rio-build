@@ -1487,8 +1487,8 @@ impl DagActor {
                 is_ca: state.ca.is_ca && !state.is_fixed_output,
                 expiry_unix,
                 // Tenant attribution for hw_perf_samples.submitting_tenant (M_054).
-                // Phase 2 of the bug_011 two-phase rollout (Phase 1 = fb096e50f);
-                // safe to set unconditionally since fb096e50f's `skip_serializing_if`
+                // Phase 2 of the bug_011 two-phase rollout (Phase 1 = 47abb56fe);
+                // safe to set unconditionally since 47abb56fe's `skip_serializing_if`
                 // + `#[serde(default)]` cover both rolling-upgrade skew directions.
                 tenant: state.attributed_tenant(&self.builds).map(|u| u.to_string()),
                 input_closure_digest,

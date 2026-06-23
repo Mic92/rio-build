@@ -1,7 +1,7 @@
 # Closure-evidence campaign records (closed-campaign archive)
 
 Archived verbatim from `docs/spec/models/closure-evidence-invariant-map.md` @
-`a00957266` (the retirement wave's base; the map is deleted unchanged by the
+`690a921be` (the retirement wave's base; the map is deleted unchanged by the
 wave's final commit); append-only; this is a closed-campaign archive, not a
 live registry — nothing here maps live artifacts. Relocated by owner directive
 2026-06-12 ("can we get rid of the invariant-map.md's now?"), content
@@ -741,81 +741,81 @@ under `docs/spec/models/calibration/` (re-runnable falsification record, not wir
 | CE-4 | TEST | CA realisation lane (NOT-ENC, design §4): `reprobe_substitute_floating_ca…` tests + `sched.merge.ca-fod-substitute` |
 | CE-5 | WIRED-CHECK + TEST | Reset/Queued-gating half: `quint-closure-calib-f1-stale-produced` + `test_reprobe_unlocked_deferred_past_stale_reset` (the parent-stays-Queued-past-stale-reset pin); Skipped half: `test_stale_skipped_output_reset` (**re-added pull-mode THIS STAGE** — the design §2e noted the stream-era original was deleted) + dag/tests.rs H1/H2 |
 | CE-6 | WIRED-CHECK | Family rep CE-2 (`quint-closure-calib-f1-stale-produced`); single verify path by construction (`verify_preexisting_completed` is the one reset/routing decision site) |
-| CE-7 | RESIDUAL | The C5/CE-7 deferred manual target (0d record: falsifiability plan at 3-build constants; owner sign-off item). Production behavior covered by the effective-wanted unit tests (77c98e01b's regression suite) |
+| CE-7 | RESIDUAL | The C5/CE-7 deferred manual target (0d record: falsifiability plan at 3-build constants; owner sign-off item). Production behavior covered by the effective-wanted unit tests (1e2165987's regression suite) |
 | CE-8 | WIRED-CHECK | Family rep CE-9 (`quint-closure-calib-f2-seed-only-walk`); production fixed-point (`apply_cached_hits` gated on `all_deps_completed`) |
 | CE-9 | WIRED-CHECK | `quint-closure-calib-f2-seed-only-walk` (B2) |
 | CE-10 | WIRED-CHECK | Family rep CE-9 (same check); walk error propagation tests |
 | CE-11 | WIRED-CHECK | Family rep CE-9 + wired witness `quint-closure-evidence-witness-tried-demotion` (the `substitute_tried` one-shot) |
-| CE-12 | TEST | `verifiable_wanted_paths` ∃-guard (one shared predicate, 6e6fe5b8a) + B4 falsification EM-closure-f4-vacuous-prune |
+| CE-12 | TEST | `verifiable_wanted_paths` ∃-guard (one shared predicate, 3f0121dae) + B4 falsification EM-closure-f4-vacuous-prune |
 | CE-13 | TEST | Own-selector resolvability guard + its merge tests; B4 falsification EM-closure-f4-vacuous-prune |
-| CE-14 | TEST | Family rep CE-13 (same EM); both-guards tests (97fae90f5) |
+| CE-14 | TEST | Family rep CE-13 (same EM); both-guards tests (e56ecb2ad) |
 | CE-15 | TEST | Model property B7 (holds, 0c record); production prune/classification share the wanted-criterion helpers |
 | CE-16 | TEST | Union-on-conflict stored wanted (B5); falsification EM-closure-f5-wanted-overwrite; production union tests |
-| CE-17 | TEST | Walk-completion re-check against current wanted (model consumeWalk; B1/B2); production re-check tests (6609ce4fe) |
+| CE-17 | TEST | Walk-completion re-check against current wanted (model consumeWalk; B1/B2); production re-check tests (d2a3d3c4e) |
 | CE-18 | BY-CONSTRUCTION | Model: the all-or-nothing merge intent makes rollback-replay divergence unrepresentable (0d re-route record); production: `rollback_merge` restores wholesale snapshots; rollback tests in actor/tests/merge.rs |
-| CE-19 | BY-CONSTRUCTION | Same mechanism as CE-18 (+ the resubmit-reset wholesale restore); 2999c1bea regression tests |
-| CE-20 | TEST | Chain-scoped `never_forgive` + chain-end clears; A21 falsification EM-closure-f6-latch-outlives-chain (rust-simulator backend, the recorded TLC discrepancy); 71e37da5f tests |
-| CE-21 | TEST | Family rep (CE-21 co-rep with CE-20, same EM); setter-coverage tests (5113de5c8) |
-| CE-22 | WIRED-CHECK | `quint-closure-evidence-witness-downgrade-respawn` (the downgrade re-spawn arm is reachable); A12/A1 model properties; 29b5322e0 tests |
-| CE-23 | RESIDUAL | The accepted forgiveness residual hole — wired witness `quint-closure-evidence-witness-forgiven-residual` (the model REACHES it, negative calibration by design); 9bc7be84a documentation; deployment-checklist CE-D8-adjacent |
+| CE-19 | BY-CONSTRUCTION | Same mechanism as CE-18 (+ the resubmit-reset wholesale restore); d6fa5194d regression tests |
+| CE-20 | TEST | Chain-scoped `never_forgive` + chain-end clears; A21 falsification EM-closure-f6-latch-outlives-chain (rust-simulator backend, the recorded TLC discrepancy); 98f52bedd tests |
+| CE-21 | TEST | Family rep (CE-21 co-rep with CE-20, same EM); setter-coverage tests (209e2b56f) |
+| CE-22 | WIRED-CHECK | `quint-closure-evidence-witness-downgrade-respawn` (the downgrade re-spawn arm is reachable); A12/A1 model properties; 103a9a508 tests |
+| CE-23 | RESIDUAL | The accepted forgiveness residual hole — wired witness `quint-closure-evidence-witness-forgiven-residual` (the model REACHES it, negative calibration by design); 2ed8f03c5 documentation; deployment-checklist CE-D8-adjacent |
 | CE-24 | BY-CONSTRUCTION | The `topdown_pruned` state machine exists end-to-end (migration 063 + the mark lifecycle); WIRED `quint-closure-calib-f8-dispatch-no-evidence` (A1) + `kani-rio-evidence-kernel` (THIS STAGE) |
 | CE-25 | BY-CONSTRUCTION | Production: the stamp is a statement of the merge transaction itself (`persist_merges`, `sched.evidence.durability+2`); model: all-or-nothing intent (the 0d structural-override-inert record). The deferred structural override is closed as inert-at-abstraction — the abstraction IS the mechanism |
 | CE-26 | BY-CONSTRUCTION | Activation is the merge transaction's last statement (A13); wired witness `quint-closure-evidence-witness-rollback` |
-| CE-27 | TEST | Stamp gate requires dropped closure (`markImpliesClosureDropped`, A2 holds 0c); 03ff900e6 merge tests |
+| CE-27 | TEST | Stamp gate requires dropped closure (`markImpliesClosureDropped`, A2 holds 0c); 2f108b740 merge tests |
 | CE-28 | WIRED-CHECK | `quint-closure-calib-f7-clear-unbuilt` (co-rep with CE-30) |
-| CE-29 | FIXED-P1 (ii) + TEST (i) | (ii) the fail-open dispatch arm: Wave 1 settlement re-probe (every fail-fast/dispatch decision point now requires a definitive verdict; `7c2d8ea31`); (i) fail-fast consumes the mark: A9 (holds 0c) + c0431eb20 tests |
+| CE-29 | FIXED-P1 (ii) + TEST (i) | (ii) the fail-open dispatch arm: Wave 1 settlement re-probe (every fail-fast/dispatch decision point now requires a definitive verdict; `7c2d8ea31`); (i) fail-fast consumes the mark: A9 (holds 0c) + aa527966c tests |
 | CE-30 | WIRED-CHECK | `quint-closure-calib-f7-clear-unbuilt` (A3) |
 | CE-31 | BY-CONSTRUCTION | The recovery clear gate is the strict SQL criterion over the durable relation (`load_parents_with_all_children_produced`, db/recovery.rs); A19 (holds; trigger pinned by recovery witnesses); db/tests/recovery.rs. The A19-direction structural override stays a recorded deferred target (0d) |
 | CE-32 | BY-CONSTRUCTION | Migration 063 + OR-on-conflict persistence; wired witness `quint-closure-evidence-witness-stamp`; recovery restore tests |
 | CE-33 | WIRED-CHECK | `quint-closure-calib-f8-dispatch-no-evidence` (A1) + `kani-rio-evidence-kernel` (`check_marked_broken_must_substitute`, `check_pull_refusal_chain` — THIS STAGE) |
-| CE-34 | TEST | A14 `terminalIsTerminal` (holds 0c); f09d16611 idempotence regression tests |
+| CE-34 | TEST | A14 `terminalIsTerminal` (holds 0c); a5b53a402 idempotence regression tests |
 | CE-35 | BY-CONSTRUCTION | **Strengthened THIS STAGE**: the single classifier is now a dependency-free pure kernel (`rio_evidence_kernel::closure_evidence`) and every scheduler site projects through `DerivationDag::closure_evidence` — a guard cannot bypass the classifier without bypassing the only function that exists; WIRED `kani-rio-evidence-kernel` (exhaustive case analysis) |
 | CE-36 | WIRED-CHECK | Wired witness `quint-closure-evidence-witness-hole-reap` + `kani-rio-evidence-kernel` (`check_hole_breaks_and_never_vouches`); A4 (holds 0c) |
-| CE-37 | FIXED-P1 (pairing) | The reap-time survivor re-evaluation (8c13186fa) plus Wave 2b's poison-clear survivor re-evaluation (`7750a4d45`, `sched.poison.clear-survivor-reevaluation`) — the L3 re-hunt proves the pairing closes the strand; reap-survivor tests |
-| CE-38 | FIXED-P1 | Wave 1 settlement (the fail-fast skips in-flight-walk survivors and re-probes; `7c2d8ea31`/`2351a35ba`/`7b4a2e2d2`); a6550006e's original in-flight-walk skip; Wave-1 battery tests |
+| CE-37 | FIXED-P1 (pairing) | The reap-time survivor re-evaluation (2c091deb6) plus Wave 2b's poison-clear survivor re-evaluation (`7750a4d45`, `sched.poison.clear-survivor-reevaluation`) — the L3 re-hunt proves the pairing closes the strand; reap-survivor tests |
+| CE-38 | FIXED-P1 | Wave 1 settlement (the fail-fast skips in-flight-walk survivors and re-probes; `7c2d8ea31`/`2351a35ba`/`7b4a2e2d2`); c3b9b51b0's original in-flight-walk skip; Wave-1 battery tests |
 | CE-39 | BY-CONSTRUCTION | Migration 064 + OR-on-conflict; wired witnesses hole-reap/hole-recovery |
 | CE-40 | WIRED-CHECK | `quint-closure-evidence-witness-hole-recovery` (the recovery hole-stamp fires); recovery tests. The deferred structural override (A4-direction recovery copy) closed as covered-by-witness + tests |
 | CE-41 | WIRED-CHECK | `quint-closure-calib-f9-poison-clear-no-stamp` (A5) + wired witnesses hole-admin-clear / hole-ttl-sweep |
 | CE-42 | TEST | `test_closure_hole_survives_completion_and_stale_completed_reset` + A4–A8 model properties (resubmit carry encoded) |
-| CE-43 | TEST | Round-23 bug_006 regression test (2791da787) + A9 `failFastConsumesMarkKeepsHole` (holds 0c). The deferred structural override closed as covered-by-test + model property |
-| CE-44 | TEST | A20 `healCompleteness` (holds 0c); PG-side total heal filter; 6799b70b5 tests |
+| CE-43 | TEST | Round-23 bug_006 regression test (7eaedebd8) + A9 `failFastConsumesMarkKeepsHole` (holds 0c). The deferred structural override closed as covered-by-test + model property |
+| CE-44 | TEST | A20 `healCompleteness` (holds 0c); PG-side total heal filter; af8f9d8f7 tests |
 | CE-45 | BY-CONSTRUCTION | The strict SQL vouch gate (live co-ownership joins); A3 falsification at the unscoped variant recorded as EM-closure-f10-recovery-vouch-unscoped (depth-17 TLC, evidence-module-only per 0d) |
 | CE-46 | FIXED-P1 | Wave 2b co-ownership scoping of the in-DAG recompute (`7750a4d45` production + `e56a1b73c` model; A22 + `pInDagCondemnCriterion`); the condemn direction was the Wave-2 residual finding |
 | CE-47 | BY-CONSTRUCTION | The recovery failed-dep cascade (`sched.recovery.failed-dep-cascade+2`) + Wave 2b scoping; A15 declared-children form; recovery tests |
 | CE-48 | TEST (i) + TEST (ii) | (i) recovered-Substituting reset: EM-closure-f14-recovery-keeps-substituting (L1 falsified) + recovery reset tests; (ii) orphan-Ready interest gate: A16 (holds 0c) + recovery interest-gate tests |
-| CE-49 | BY-CONSTRUCTION | All-or-nothing merge transaction (A13/B6); ENC-A CE-26; 8b22d0594 regression tests |
+| CE-49 | BY-CONSTRUCTION | All-or-nothing merge transaction (A13/B6); ENC-A CE-26; 23d740b95 regression tests |
 | CE-50 | FIXED-P1 | Wave 3 FENCE EVERYTHING (uniform claims-floor fence on every evidence write; `498db7410`..`c47de3ccc`); WIRED `quint-closure-evidence-stale-fence-holds` + `quint-closure-calib-a17-unfenced` regression pin. Supersedes the 0d F11 rust-simulator-only posture |
 | CE-51 | WIRED-CHECK | `quint-closure-evidence-witness-tried-demotion` (the one-shot demotion is reachable, so the loop-suppression arm exists); L1 (holds 0c) |
 | CE-52 | TEST | The 0d absorption record (the re-probe lane cannot strand a node at this abstraction — merge-time resetNodes owns resurrection); `test_resubmit_poisoned_at_limit_substitutable` (the Poisoned→Substituting transition-table pin); L1 via EM-closure-f14 |
-| CE-53 | TEST | `test_resubmit_poisoned_at_limit_substitutable` (the pull-mode successor of c9107fc1e C5's stream-era test, both lanes) + the same family absorption record |
-| CE-54 | TEST | Revert-target completeness tests (6875c3769 C4); A15-adjacent model coverage |
+| CE-53 | TEST | `test_resubmit_poisoned_at_limit_substitutable` (the pull-mode successor of ce6442ed3 C5's stream-era test, both lanes) + the same family absorption record |
+| CE-54 | TEST | Revert-target completeness tests (e4ada4007 C4); A15-adjacent model coverage |
 | CE-55 | TEST | Build-accounting (NOT-ENC F17): merge-over-poisoned-leaf verdict tests + `tick_recheck_stuck_completions` |
-| CE-56 | TEST | d91df7e9f regression (poison-removal updates interested builds' totals) |
-| CE-57 | TEST | `test_reprobe_completion_fans_out_to_earlier_build` (c9107fc1e C4) |
+| CE-56 | TEST | cdb6d8b8d regression (poison-removal updates interested builds' totals) |
+| CE-57 | TEST | `test_reprobe_completion_fans_out_to_earlier_build` (ce6442ed3 C4) |
 | CE-58 | TEST | Probe-coverage union (merge-time + dispatch-time); B8 falsification EM-closure-f13-unprobed-dispatch; dispatch_time_substitutable_completes tests |
 | CE-59 | TEST | Spawn-intent probed gate (`sched.admin.spawn-intents.probed-gate+2` tests) — NOT-ENC (pods out of model) |
 | CE-60 | TEST | Probe trichotomy: EM-closure-f3-indet-failfast (B3) + EM-closure-f3-substitutable-demoted (C2); store cap-truncation tests |
 | CE-61 | TEST | Family rep (same EMs); 429/5xx-as-indeterminate store tests |
-| CE-62 | TEST | ENC-A CE-61 (same EMs); retry-before-demote (15aa844d7) walk tests |
+| CE-62 | TEST | ENC-A CE-61 (same EMs); retry-before-demote (40df952cd) walk tests |
 | CE-63 | TEST | Store probe-cache tenant keying tests — NOT-ENC (store-side) |
 | CE-64 | TEST | Store singleflight tests — NOT-ENC (store-side) |
-| CE-65 | TEST | Store placeholder reclaim tests (2d7e4f9fd) — NOT-ENC (store-side) |
-| CE-66 | WIRED-CHECK | `quint-closure-calib-f4-demand-drop` (B10) + `test_topdown_explicit_target_*` (85213119d, actor/tests/merge.rs) |
-| CE-67 | TEST | Gateway result verification (cb3f6bfbb/73bcad709 tests; `gw.dag.reconstruct+3`) — NOT-ENC (different component) |
-| CE-68 | BY-CONSTRUCTION | Duplicate-drv contribution union (production) + all-or-nothing intent (model); 8c594a527 tests |
+| CE-65 | TEST | Store placeholder reclaim tests (4b331aa4c) — NOT-ENC (store-side) |
+| CE-66 | WIRED-CHECK | `quint-closure-calib-f4-demand-drop` (B10) + `test_topdown_explicit_target_*` (c527cc08b, actor/tests/merge.rs) |
+| CE-67 | TEST | Gateway result verification (b8d0c1be1/c7af1396f tests; `gw.dag.reconstruct+3`) — NOT-ENC (different component) |
+| CE-68 | BY-CONSTRUCTION | Duplicate-drv contribution union (production) + all-or-nothing intent (model); 12e5e3ba9 tests |
 | CE-69 | WIRED-CHECK | ENC-A CE-30: `quint-closure-calib-f7-clear-unbuilt` (the clear-before-reconciliation weakening IS the F12 ordering shape); `sched.merge.reconcile-order` tests |
 | CE-70 | BY-CONSTRUCTION | The detached-walk asynchrony IS the design response to the stall family (NOT-ENC by design); the model's asynchronous walk encodes it; perf fixes' own tests |
-| CE-71 | TEST | Recovery preserves each build's full derivation set (891a6520d regression); recovery tests — NOT-ENC (build accounting) |
-| CE-72 | TEST | Recovery interest gate (998df909b, I-058/I-059) + A16 (holds 0c); recovery tests |
+| CE-71 | TEST | Recovery preserves each build's full derivation set (cd1fbb20e regression); recovery tests — NOT-ENC (build accounting) |
+| CE-72 | TEST | Recovery interest gate (b9281a509, I-058/I-059) + A16 (holds 0c); recovery tests |
 | CE-73 | BY-CONSTRUCTION | The produced-status set is {Completed, Skipped} everywhere (model: the Produced collapse absorbs it; production: `all_deps_completed` / the verify candidates / the classifier projections all match on both); dag/tests.rs H1/H2 + `test_stale_skipped_output_reset` (re-added THIS STAGE) |
-| CE-74 | TEST | CA-cutoff candidate identity tests (d7cf1a4ce) — NOT-ENC (CA lane out of model) |
-| CE-75 | BY-CONSTRUCTION | ENC-A CE-18 (all-or-nothing + wholesale restore); a91d63026 rollback-restore tests |
-| CE-76 | TEST | `sched.merge.dep-failed-transitive` tests (e45f2d966 C4) — NOT-ENC (F17) |
-| CE-77 | TEST | Completion fan-out + completion-authenticity tests (4d20e7c28) — NOT-ENC (F17) |
-| CE-78 | TEST | `tick_recheck_stuck_completions` (71a7c8a9b) — NOT-ENC (F17) |
-| CE-79 | TEST | Recovery verdict-state restoration tests (5b4543c3a) — NOT-ENC (F10/F17 accounting); round-1 retry campaign owns the ledger-side restore |
-| CE-80 | TEST | Retry-lane persistence tests (84a692492); round-1 retry campaign (the ledger fold) — NOT-ENC here |
-| CE-81 | TEST | Recovery completion sweep tests (04581fcbb) — NOT-ENC (F17) |
+| CE-74 | TEST | CA-cutoff candidate identity tests (58761e0d7) — NOT-ENC (CA lane out of model) |
+| CE-75 | BY-CONSTRUCTION | ENC-A CE-18 (all-or-nothing + wholesale restore); 8691fe2c8 rollback-restore tests |
+| CE-76 | TEST | `sched.merge.dep-failed-transitive` tests (fa023cd04 C4) — NOT-ENC (F17) |
+| CE-77 | TEST | Completion fan-out + completion-authenticity tests (a35fb9246) — NOT-ENC (F17) |
+| CE-78 | TEST | `tick_recheck_stuck_completions` (05572a6e5) — NOT-ENC (F17) |
+| CE-79 | TEST | Recovery verdict-state restoration tests (daf691ccd) — NOT-ENC (F10/F17 accounting); round-1 retry campaign owns the ledger-side restore |
+| CE-80 | TEST | Retry-lane persistence tests (b7b3ca086); round-1 retry campaign (the ledger fold) — NOT-ENC here |
+| CE-81 | TEST | Recovery completion sweep tests (df69127f0) — NOT-ENC (F17) |
 
 **Tally.** 81 rows, all dispositioned — no row without a disposition (no coverage gap; the
 stop-and-report condition did not fire). By primary category: 17 WIRED-CHECK, 15

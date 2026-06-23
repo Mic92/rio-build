@@ -3,7 +3,7 @@
 // Acceptance re-run, family G4a, against the REPLACEMENT model
 // (refcount-formal plan T-1a.6; design §4.6 "the calibration table is
 // re-run as the acceptance table"): the drain re-check / resurrect
-// handling reverted to its pre-`aa738a5d7` (M_006) shape, re-pointed
+// handling reverted to its pre-`c1b901409` (M_006) shape, re-pointed
 // from the as-built model (calibration/refcount-g4a.qnt, Stage C) at
 // chunkCollect.qnt. The drain re-check is a SURVIVING mechanism of the
 // replacement (design §4.2 — under Release A it narrows to `deleted`

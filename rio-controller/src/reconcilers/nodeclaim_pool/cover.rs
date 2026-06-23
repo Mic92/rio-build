@@ -1411,7 +1411,7 @@ mod tests {
     /// asserts the LAW — affordable ⇒ nonzero mint — never the
     /// starved output. The pre-fix pin (`budget=10 ⇒ c.is_empty()`)
     /// was a regression floor on the bug itself (max_c=8 ≤ 10:
-    /// affordable members existed at larger n) and 2e2ce1a32 later
+    /// affordable members existed at larger n) and 6872636e4 later
     /// pinned it as the green side without examining the cell. The
     /// genuinely-unaffordable fixture moves BELOW max_c, where the
     /// family's floor really binds — and that arm must disclose

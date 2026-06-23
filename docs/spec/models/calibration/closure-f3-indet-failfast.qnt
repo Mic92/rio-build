@@ -12,8 +12,8 @@
 //
 // Stage-C calibration override, closure-evidence family F3, soundness
 // direction (false demotion to from-source / "unknown is not missing";
-// corpus rep CE-61, 9bbe9ee29 — 429/5xx/deadline-cut probes were
-// reported as confirmed-miss; CE-60 d6dd46edd is the same trichotomy
+// corpus rep CE-61, 4fa8105c1 — 429/5xx/deadline-cut probes were
+// reported as confirmed-miss; CE-60 7d6068494 is the same trichotomy
 // with a probe-cap trigger). Crosswalk row:
 // closure-evidence-formal-design.md §4 "F3 CE-60, CE-61 → ENC (rep:
 // CE-61) → B3"; 0d verdict: the VERDICT block at the end of this
@@ -77,7 +77,7 @@ module closureCalibF3IndetFailFast {
   /// PRE-FIX fail-fast arm of the dispatch probe: fires on any wanted
   /// output that is merely missing — no confirmed-miss answer required
   /// (indeterminate / rate-limited / substitutable answers are mapped
-  /// to "missing", the pre-9bbe9ee29 verdict mapping). Latches keep the
+  /// to "missing", the pre-4fa8105c1 verdict mapping). Latches keep the
   /// as-built oracle.
   action calibProbeFailFastIndet(d: str): bool = all {
     leaderActive,

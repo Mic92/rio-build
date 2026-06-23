@@ -9,12 +9,12 @@
 // pattern as gw-f1-capacity.qnt.
 //
 // Candidates carried by this file:
-//   - GW-9  (bbf30cc7f)  gwCalibF6WireErrorRemovesTracked -> s16
-//   - GW-9  (0f476d6f0/a207ee15c) gwCalibF6ExitEdgeSkipsCancel -> s10
-//   - GW-10 (2e54649c3)  gwCalibF6AbortWinsOverCancel     -> s10
-//   - GW-11 (1cca275b4)  gwCalibF6FinishSkipsPumpReap     -> l8
-//   - GW-11 (9a18f756a)  gwCalibF6ConnDropLeaksGauge      -> s3
-//   - GW-20 (24bd41581)  gwCalibF6CloseOutSkipsExitStatus -> s19
+//   - GW-9  (ae4227afa)  gwCalibF6WireErrorRemovesTracked -> s16
+//   - GW-9  (2afc5f973/cca22eb07) gwCalibF6ExitEdgeSkipsCancel -> s10
+//   - GW-10 (288bec05c)  gwCalibF6AbortWinsOverCancel     -> s10
+//   - GW-11 (5e97a7dc8)  gwCalibF6FinishSkipsPumpReap     -> l8
+//   - GW-11 (a2544db78)  gwCalibF6ConnDropLeaksGauge      -> s3
+//   - GW-20 (a6c80bda4)  gwCalibF6CloseOutSkipsExitStatus -> s19
 //
 // Run (serially, from the repo root):
 //   quint verify --backend=tlc --main=<module> --step=calibStep \
@@ -22,7 +22,7 @@
 //     docs/spec/models/calibration/gw-f6-teardown.qnt
 
 // =========================================================================
-// CALIBRATION — pre-bbf30cc7f (GW-9, tracking half): the build handler
+// CALIBRATION — pre-ae4227afa (GW-9, tracking half): the build handler
 // removed the build id from active_build_ids when the opcode returned
 // REGARDLESS of outcome — including stream failures with no terminal
 // outcome — so a disconnect mid-build found an empty set and the cancel
@@ -41,11 +41,11 @@
 // - GW-9 gwCalibF6WireErrorRemovesTracked (tracking cleared early):
 //   FALSIFIES S16 @ 11 (6,966/403) — a tracked build's stream fails with a
 //   Wire-class error and the pre-fix handler removes it from
-//   active_build_ids anyway (bbf30cc7f: the disconnect cleanup loop later
+//   active_build_ids anyway (ae4227afa: the disconnect cleanup loop later
 //   finds an empty set).
 // - GW-9 gwCalibF6ExitEdgeSkipsCancel (exit edge): FALSIFIES S10 @ 12
 //   (14,698/723) — a non-panic exit edge skips the cancel loop with a build
-//   still tracked (the 0f476d6f0 / a207ee15c case-completeness shape).
+//   still tracked (the 2afc5f973 / cca22eb07 case-completeness shape).
 // - GW-10 gwCalibF6AbortWinsOverCancel: FALSIFIES S10 @ 11 (4,599/277) —
 //   channel close hard-aborts the protocol task (the pre-fix
 //   ChannelSession::Drop abort); the cancel obligation is destroyed with
@@ -54,14 +54,14 @@
 //   the cancel loop) — not the §1 simplification trigger.
 // - GW-11 gwCalibF6FinishSkipsPumpReap (task quiescence): FALSIFIES L8 @ 14
 //   (77,880/3,536) — the close-out completes but the pre-fix finish awaits
-//   the client pump instead of reaping it (1cca275b4).
-// - GW-11 gwCalibF6ConnDropLeaksGauge (gauge, 9a18f756a): FALSIFIES S3 @ 7
+//   the client pump instead of reaping it (5e97a7dc8).
+// - GW-11 gwCalibF6ConnDropLeaksGauge (gauge, a2544db78): FALSIFIES S3 @ 7
 //   (965/100) — a connection drop tears down a still-held SessionGuard but
 //   the pre-fix path never decrements channels_active; S2 stays true on the
 //   same trace (the permit release is correct), so the falsification is
 //   attributable to the gauge alone.
 // - GW-20 gwCalibF6CloseOutSkipsExitStatus: FALSIFIES S19 @ 10 (3,467/222)
-//   — the close-out ladder starts at eof (24bd41581); V-only per the §3.4
+//   — the close-out ladder starts at eof (a6c80bda4); V-only per the §3.4
 //   row (the client-side hang is environment, not modeled).
 // - BASELINE: gwCalibF6AsBuilt (GW-9, GW-10, GW-11, GW-20) 3,253,999
 //   distinct / 224 s — HOLDS; reachability-equivalent to famUpstream
@@ -129,7 +129,7 @@ module gwCalibF6WireErrorRemovesTracked {
 }
 
 // =========================================================================
-// CALIBRATION — pre-0f476d6f0 / pre-a207ee15c (GW-9, exit-edge half): one
+// CALIBRATION — pre-2afc5f973 / pre-cca22eb07 (GW-9, exit-edge half): one
 // of the session-exit paths (idle timeout, non-EOF opcode-read error)
 // returned without running cancel_active_builds — the recurring
 // case-completeness bug shape (fixed four separate times in the corpus).
@@ -208,7 +208,7 @@ module gwCalibF6ExitEdgeSkipsCancel {
 }
 
 // =========================================================================
-// CALIBRATION — pre-2e54649c3 (GW-10): on TCP-RST russh fires channel_eof
+// CALIBRATION — pre-288bec05c (GW-10): on TCP-RST russh fires channel_eof
 // (the cancel loop starts) and channel_close (ChannelSession::Drop
 // abort()s the task) concurrently — when the abort wins, the CancelBuild
 // never reaches the scheduler. The pre-fix channel close below aborts the
@@ -305,7 +305,7 @@ module gwCalibF6AbortWinsOverCancel {
 }
 
 // =========================================================================
-// CALIBRATION — pre-1cca275b4 (GW-11, task-quiescence half):
+// CALIBRATION — pre-5e97a7dc8 (GW-11, task-quiescence half):
 // finish_channel_session awaited the client pump unbounded, and the pump
 // only exits on client action — a client that never closes the channel
 // parks the task and its buffers indefinitely, uncounted by any cap (the
@@ -377,7 +377,7 @@ module gwCalibF6FinishSkipsPumpReap {
 }
 
 // =========================================================================
-// CALIBRATION — pre-9a18f756a (GW-11, gauge half): the channels_active
+// CALIBRATION — pre-a2544db78 (GW-11, gauge half): the channels_active
 // gauge decrement was scattered over three explicit call sites; abnormal
 // exit paths (proto-task panic, connection drop) bypassed them and the
 // gauge leaked. The pre-fix transport reap below releases the permit and
@@ -463,7 +463,7 @@ module gwCalibF6ConnDropLeaksGauge {
 }
 
 // =========================================================================
-// CALIBRATION — pre-24bd41581 (GW-20): the close-out omitted the RFC 4254
+// CALIBRATION — pre-a6c80bda4 (GW-20): the close-out omitted the RFC 4254
 // exit-status before eof/close — a ControlMaster foreground ssh waits for
 // it forever (the client-side hang is environment, so this candidate has
 // no T half; the gateway-side obligation is the ordered close-out).

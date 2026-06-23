@@ -1208,7 +1208,7 @@ module nodeclaimLifecycle {
       // `n = n_aff.min(budget / chunk).min(cfg.inflight_headroom)`
       // (cover.rs::sizing) is n = min(deficit, remaining budget,
       // headroom); the retired flat per-cell-per-tick cap stays GONE
-      // from the relation exactly as 2e2ce1a32 removed it from the
+      // from the relation exactly as 6872636e4 removed it from the
       // tree. wantB's headroom term debits `wantA` (NOT `createdA`:
       // `createdA` is bound below, after `wantB`; the `- wantA` debit
       // matches the existing `globalRemaining - wantA` shape on the

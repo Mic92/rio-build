@@ -145,7 +145,7 @@ const CHUNK_UPGRADE_TX_BUCKETS: &[f64] = &[
 /// Spans the nine [`ingest::IngestStage`] labels: narinfo/claim/
 /// pg_upsert/pg_commit are millisecond-range PG round-trips; sha256/
 /// chunk are seconds-per-GiB compute; fetch/s3_upload are tens of
-/// seconds for multi-GB NARs at a8f15a9a4's whole-NAR FastCDC (~43 s
+/// seconds for multi-GB NARs at 0721d31eb's whole-NAR FastCDC (~43 s
 /// s3_upload on the 826 MB linux-source benchmark). 300 s top is
 /// headroom for multi-GB NARs under per-file chunking — fits inside
 /// `SUBSTITUTE_DURATION_BUCKETS`' design envelope; the `[0.005..10.0]`

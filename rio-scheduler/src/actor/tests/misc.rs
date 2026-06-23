@@ -11,7 +11,7 @@ use tracing_test::traced_test;
 /// MUST NOT call `SlaEstimator::refresh()` on the actor turn — the
 /// refresh body lives in `estimator_poller`. Count-based, not
 /// wall-clock (`ci-failure-patterns.md` "Wall-clock gate under load →
-/// prefer (c)"). RED at base a008959a2: the on-actor `refresh()` call
+/// prefer (c)"). RED at base 0fa53f396: the on-actor `refresh()` call
 /// at `housekeeping.rs:154-163` bumps `refresh_calls` on the 6th tick.
 ///
 /// Secondary: `full_sweep` STILL runs on cadence — a sentinel priority
@@ -226,7 +226,7 @@ async fn test_not_leader_does_not_set_gauges() -> TestResult {
 /// gauges; subsequent `Tick` early-returns so the orphan-watcher does
 /// NOT write `Cancelled` to PG for builds the new leader is running.
 ///
-/// Pre-fix (b62291b8): no `LeaderLost` command, no `handle_tick`
+/// Pre-fix (fdb01df0): no `LeaderLost` command, no `handle_tick`
 /// leader gate. After `on_lose()`, dropping `event_rx` and ticking ×3
 /// (cfg(test) `ORPHAN_BUILD_GRACE=ZERO` → cancels on tick 2) wrote
 /// `status='cancelled'` to PG.
@@ -1479,7 +1479,7 @@ async fn apply_soft_features_re_derives_effective_features() {
 /// never matches and the cold-start probe falls through to the default
 /// `[sla].probe.cpu`.
 ///
-/// RED at `0c4c55d5b`: `state.soft_features()` does not exist; with the
+/// RED at `215acde83`: `state.soft_features()` does not exist; with the
 /// accessor stubbed to `[]` the second assert fails: `intent.cores`
 /// equals `test_sla_config().probe.cpu` (4), not the `feature_probes.
 /// big-parallel.cpu` override (48).
@@ -4376,7 +4376,7 @@ async fn parked_tick_disclosure_carries_the_failure_evidence() -> TestResult {
 /// W9-O (round-9 B2 admissibility): a driven leader Tick populates
 /// EVERY cell of `rio_scheduler_tick_phase_seconds` -- all 19 phases
 /// `00-priority-sweep`..`18-snapshot-publish`, exactly. The landed
-/// instrument (00fbb0717) is the measurement substrate for every
+/// instrument (a53b7c796) is the measurement substrate for every
 /// Banner-A bounding decision (which Tick term gets a work quota
 /// first), so an unreachable phase cell is a silent forensics hole:
 /// the live_053 134.65s Tick was log-silent for ~118s precisely

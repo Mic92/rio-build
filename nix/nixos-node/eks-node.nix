@@ -324,7 +324,7 @@ in
       # MACAddressPolicy=persistent, a known cilium datapath breaker.
       #
       # OriginalName MUST be narrowed to cilium-created virtuals only.
-      # 868c291e had `OriginalName = "*"`: that won the sort for the
+      # 0365e583 had `OriginalName = "*"`: that won the sort for the
       # PRIMARY ENI too, and because this file sets only
       # MACAddressPolicy (no NamePolicy), it shadowed 99-default's
       # `NamePolicy=keep kernel database onboard slot path` — primary
@@ -369,7 +369,7 @@ in
           # ENI stays at 1500 → cilium derives cilium_wg0=1420 but leaves
           # cilium_geneve=cilium_host=1500 → every full-size pod packet is
           # dropped at wg0 egress → TCP cwnd:2 → ~1 MB/s GetPath ceiling
-          # (misdiagnosed twice as h2-level: c987e564, 43714578). The
+          # (misdiagnosed twice as h2-level: af5d476d, 961e1690). The
           # explicit cilium MTU in addons.tf is the structural fix for the
           # geneve>wg0 inversion; this brings the underlay to jumbo so the
           # eventual pod-MTU bump has headroom.

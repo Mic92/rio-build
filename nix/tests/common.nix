@@ -393,7 +393,7 @@ rec {
 
   # Auto-import every <name>.nix in `dir` as { <name> = import <file>; }.
   # Replaces hand-maintained fragment-index default.nix files — those
-  # drifted (commit 72d1576a dropped a dangling entry). Any .nix directly
+  # drifted (commit f68c12c3 dropped a dangling entry). Any .nix directly
   # under the dir is a fragment; subdirs and default.nix are ignored.
   importDir =
     dir:
@@ -432,7 +432,7 @@ rec {
   # private half was discarded at generation — authorizes nothing.
   # sshKeySetup truncates with the client's real key + restarts before
   # any connect happens. Same fix as k3s-full.nix 03-gateway-ssh-
-  # placeholder (6da3676).
+  # placeholder (2e06158).
   gatewayPlaceholderKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICOWXl9/32g/wAtRqYblAdI7wmPNL6phTBMlkn2o6psr placeholder-unused-vmtest";
   gatewayTmpfiles = [
     "d /var/lib/rio 0755 root root -"

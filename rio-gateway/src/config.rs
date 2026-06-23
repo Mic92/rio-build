@@ -393,7 +393,7 @@ mod tests {
 
     /// Both scheduler and store balanced modes are supported — main.rs
     /// holds `_balance_guard` (scheduler) and `_store_balance_guard`
-    /// (store, since b80acbf61). Positive cases so a future
+    /// (store, since feebfbe12). Positive cases so a future
     /// per-upstream rejection has a tripwire.
     #[test]
     fn config_accepts_balance_hosts() {

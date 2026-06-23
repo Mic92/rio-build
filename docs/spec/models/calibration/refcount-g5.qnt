@@ -8,15 +8,15 @@
 // Same extend-and-override pattern as refcount-g1.qnt.
 //
 // Family disposition of the commits NOT carried by an override module:
-//   - `a1b49b4a3` — ENC, refcountCalibG5NoHeartbeat below.
-//   - `064ceadbd` — ENC-A: the wall-clock guard task is the mechanism
+//   - `66613b03f` — ENC, refcountCalibG5NoHeartbeat below.
+//   - `15c02cc39` — ENC-A: the wall-clock guard task is the mechanism
 //     that makes the heartbeat contract hold for stalled-but-alive
-//     owners; its absence is the same no-heartbeat world the a1b49b4a3
+//     owners; its absence is the same no-heartbeat world the 66613b03f
 //     override encodes (the model does not distinguish progress-driven
 //     from wall-clock-driven heartbeats — both are the `heartbeat`
 //     action). The inline/slow-ingest claim-plumbing half of the commit
 //     is outside the chunked-upload scope of this model.
-//   - `2d7e4f9fd` (I-207) — witness-form row per the design's §3.4
+//   - `4b331aa4c` (I-207) — witness-form row per the design's §3.4
 //     pre-registration ("a liveness/latency property, encoded as a
 //     witness, not an invariant"): refcountCalibG5NoHotpathReclaim below
 //     removes the hot-path reclaim and the `noHotpathReclaim` witness
@@ -25,12 +25,12 @@
 //     the same alphabet — the revert's harm is latency, not safety,
 //     which is why the design encodes it as a witness pair rather than
 //     a falsification.
-//   - `da351aaff`, `f6bf0a546` — NOT-ENCODED (spawn_monitored
+//   - `d82844089`, `ffc5b21a6` — NOT-ENCODED (spawn_monitored
 //     operability; pre-registered per-commit exception, design §3.4 —
 //     the G7 treatment).
 
 // =========================================================================
-// CALIBRATION — pre-a1b49b4a3: no heartbeat exists. An upload that
+// CALIBRATION — pre-66613b03f: no heartbeat exists. An upload that
 // outlives the stale threshold is reapable mid-flight — the historical
 // harm was a 16-minute 6 GB upload reaped at the 15-minute scanner
 // threshold, observed as the uploader's completion failing and its
@@ -48,20 +48,20 @@
 // VERDICT ROWS (Stage-C, relocated from the retired refcount invariant
 // map; full table with the NOT-ENC/SUBS dispositions:
 // docs/spec/models/refcount-records.md):
-// - refcountCalibG5NoHeartbeat (a1b49b4a3, ENC): FALSIFIES
+// - refcountCalibG5NoHeartbeat (66613b03f, ENC): FALSIFIES
 //   s5LiveOwnerNeverReaped @ calibStep (depth 4, 152/35) — the hot-path
 //   reclaim reaps a live, guard-armed owner. Baseline (as-built step,
 //   same constants): HOLDS (9,705/981). Complements the Stage-B
 //   threshold-order check: that one inverts the ordering, this one
 //   removes the heartbeat itself.
-// - refcountCalibG5NoHotpathReclaim (2d7e4f9fd / I-207, witness-form, AS
+// - refcountCalibG5NoHotpathReclaim (4b331aa4c / I-207, witness-form, AS
 //   PRE-REGISTERED): noHotpathReclaim HOLDS under calibStep
 //   (268,869/46,623 — the repair path is gone) while boundsOK,
 //   m023NonNegative, CR-1, CR-2, CR-3, CR-4 and S5 all HOLD over the
 //   same alphabet — the revert's harm is latency, not safety. The with-
 //   mechanism half is the wired Stage-B witness quint-chunk-liveness-
 //   witness-hotpath-reclaim.
-// - ENC-A by analogy: 064ceadbd covered by refcountCalibG5NoHeartbeat
+// - ENC-A by analogy: 15c02cc39 covered by refcountCalibG5NoHeartbeat
 //   (the model does not distinguish progress-driven from wall-clock
 //   heartbeats); its inline-ingest plumbing is outside the chunked-
 //   upload scope.
@@ -125,7 +125,7 @@ module refcountCalibG5NoHeartbeat {
 }
 
 // =========================================================================
-// CALIBRATION — pre-2d7e4f9fd (I-207): no hot-path stale reclaim — a
+// CALIBRATION — pre-4b331aa4c (I-207): no hot-path stale reclaim — a
 // stale 'uploading' placeholder blocks every re-claim of its path until
 // the 15-minute orphan scanner gets to it (the historical harm:
 // substitution of a path whose previous upload had crashed stalled for

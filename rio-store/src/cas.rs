@@ -1568,7 +1568,7 @@ mod upload_tests {
     /// `min(Σ per-ingest, global)`. Four concurrent
     /// `do_upload(max_concurrent=64, 50 chunks)` against ONE shared
     /// backend with a 4-permit gate → high-water ≤ 4 (not ≈64×4). At
-    /// `a8f15a9a4` (no gate on the backend) the equivalent setup
+    /// `0721d31eb` (no gate on the backend) the equivalent setup
     /// would observe hw≈64.
     ///
     /// `multi_thread` so the four `do_upload` futures actually run

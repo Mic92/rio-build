@@ -10,9 +10,9 @@
 // per design §5.
 //
 // Candidate carried by this file (three arms of GW-13):
-//   - 765671437  gwCalibF7DrainExpiryNoCancel       (V) -> l4
-//   - d653222cf / a6a5a77b9  gwCalibF7SigtermSkipsStages (V) -> s17
-//   - d653222cf  gwCalibF7AcceptStopKillsEstablished (T) -> p6
+//   - 542effb13  gwCalibF7DrainExpiryNoCancel       (V) -> l4
+//   - 0d754b0b3 / 8b4e88da0  gwCalibF7SigtermSkipsStages (V) -> s17
+//   - 0d754b0b3  gwCalibF7AcceptStopKillsEstablished (T) -> p6
 //
 // Run (serially, from the repo root):
 //   quint verify --backend=tlc --main=<module> --step=calibStep \
@@ -20,7 +20,7 @@
 //     docs/spec/models/calibration/gw-f7-drain.qnt
 
 // =========================================================================
-// CALIBRATION — pre-765671437 (GW-13, expiry-cancel arm): the shutdown
+// CALIBRATION — pre-542effb13 (GW-13, expiry-cancel arm): the shutdown
 // token was only selected at the opcode-read point — a session parked in
 // the build-event wait never observed it, so drain expiry never cancelled
 // in-flight builds and the process exit (the CANCEL_GRACE hard exit)
@@ -42,10 +42,10 @@
 //   build parked in the build-event wait; the pre-fix token observation
 //   (opcode-read points only) never reaches it and the CANCEL_GRACE hard
 //   exit fires with the build still tracked and never cancelled
-//   (765671437).
+//   (542effb13).
 // - GW-13 gwCalibF7SigtermSkipsStages (stage collapse): FALSIFIES S17 @ 7
 //   (811/58) — SIGTERM with a live session takes the process straight down;
-//   the same state exits with live proto tasks (d653222cf / a6a5a77b9).
+//   the same state exits with live proto tasks (0d754b0b3 / 8b4e88da0).
 // - GW-13 gwCalibF7AcceptStopKillsEstablished (T): FALSIFIES P6 @ 8
 //   (1,327/85) — accept-stop tears down an established connection with a
 //   live session (the pre-drain rollout behavior).
@@ -134,7 +134,7 @@ module gwCalibF7DrainExpiryNoCancel {
 }
 
 // =========================================================================
-// CALIBRATION — pre-d653222cf / pre-a6a5a77b9 (GW-13, stage-collapse arm):
+// CALIBRATION — pre-0d754b0b3 / pre-8b4e88da0 (GW-13, stage-collapse arm):
 // no drain sequencing existed (or the drain token cascade cancelled serve
 // instantly, collapsing the window to zero) — SIGTERM took the process
 // straight down, killing clients with builds in flight before NOT_SERVING
@@ -208,7 +208,7 @@ module gwCalibF7SigtermSkipsStages {
 
 // =========================================================================
 // CALIBRATION — GW-13 trace-admission (T) half, per design §5: the
-// over-tight pre-d653222cf shutdown re-introduced — stopping the accept
+// over-tight pre-0d754b0b3 shutdown re-introduced — stopping the accept
 // loop tears down established connections and their in-flight sessions
 // instead of letting them drain (the rollout that kills clients with
 // builds in flight).

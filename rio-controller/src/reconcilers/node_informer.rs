@@ -479,7 +479,7 @@ struct ExposureFlush {
 ///   Delete-arm residual flush — an accepted under-count; λ reads
 ///   marginally high, the cost-conservative direction (the solver
 ///   under-prefers spot; never the phantom-exposure over-count that
-///   biased it toward spot, bug `b81da271f`). The forfeit is one
+///   biased it toward spot, bug `57af67780`). The forfeit is one
 ///   flush period per node in the common case but grows with the gap
 ///   since the last successful LIST (a node deleted during an
 ///   N-window LIST-failure streak forfeits up to N windows) — the
@@ -2463,7 +2463,7 @@ mod tests {
     /// (R13: `ClusterId::new` + `WindowGate::admit` +
     /// `queue_exposure_slices`), real `tonic::Status::unauthenticated`
     /// classified through the production `classify_append_status`.
-    /// TRUE RED at 83e596f0c (via the disclosed (ddddd) classifier
+    /// TRUE RED at 8f6e71592 (via the disclosed (ddddd) classifier
     /// strawman): `left: Completed { retained: 0, refused: 3 }, queue
     /// empty, reason="refused" counter ticked +180 / right: retained:
     /// 3`. Certifies: one skew observation cannot consume the
@@ -2627,7 +2627,7 @@ mod tests {
     /// axis is unrepresentable in the old alphabet — DISCLOSED
     /// STRAWMAN mapping (the pre-fix arm counted-drops at strike 1;
     /// this red's retention-until-budget law fails immediately at
-    /// 83e596f0c: `left: Completed { retained: 0, refused: 1 } at
+    /// 8f6e71592: `left: Completed { retained: 0, refused: 1 } at
     /// pass 1 / right: retained: 1 through pass 15`). Certifies: the
     /// permanent exit requires exactly N observations and is
     /// disclosed with the count — the persistent-misconfig
@@ -2714,7 +2714,7 @@ mod tests {
     /// `== DisprovesRequest ⟹ classify == Refused` (append-specific
     /// extensions live only on `Undecided` codes). rustc's exhaustive
     /// matches keep both ends total; this table pins each arm's
-    /// VALUE. TRUE RED at 83e596f0c (via the disclosed (ddddd)
+    /// VALUE. TRUE RED at 8f6e71592 (via the disclosed (ddddd)
     /// classifier strawman — the pre-fix arm expressed in the new
     /// alphabet): `left: Refused / right: Transient { auth_strike:
     /// true }` for both auth rows. Certifies: the consumer agrees
@@ -3504,7 +3504,7 @@ mod tests {
     /// no trace; `right:` counted, bound honest). λ reads marginally
     /// high — the cost-conservative direction (the solver
     /// under-prefers spot; never the phantom-exposure over-count of
-    /// bug `b81da271f`). Successor of
+    /// bug `57af67780`). Successor of
     /// `prune_absent_evicts_nodes_missing_from_relist`.
     #[test]
     fn flush_drops_absent_node_cursors_counted() {
@@ -3546,7 +3546,7 @@ mod tests {
         assert!(!cursors.contains_key("b2"));
 
         // Next flush at t=1120: still only the survivors — no phantom
-        // node-seconds from the departed nodes (the b81da271f hazard
+        // node-seconds from the departed nodes (the 57af67780 hazard
         // the watch needed `prune_absent` for cannot exist here).
         let out = flush_spot_exposure(&mut cursors, &survivors, &cfg, 0.0, 1120.0);
         assert_eq!(
