@@ -1,0 +1,28 @@
+# Example caller workflow — copy to target repo's .github/workflows/
+#
+# Prerequisites in the target repo:
+#   1. ANT_ACTIONS_TRIGGER_APP_ID + ANT_ACTIONS_TRIGGER_PRIVATE_KEY secrets
+#      (org-level; ant-actions-trigger App, actions:write on anthropics/actions)
+#   2. agent-pr-actions GitHub App installed on the repo (#sec-eng-assist ticket)
+#   3. Branch protection: require agent-approval-check status from the agent-pr-actions App
+#
+# Agent identities (emails, bot logins) are configured centrally in
+# anthropics/actions/agent-approval-check/agent-identities.yaml.
+---
+name: Agent Approval Check
+
+on:
+    pull_request:
+        types: [opened, synchronize, reopened, edited, ready_for_review]
+    pull_request_review:
+        types: [submitted, dismissed]
+    issue_comment:
+        types: [created]
+    merge_group:
+
+permissions: {}
+
+jobs:
+    agent-approval:
+        uses: anthropics/actions/.github/workflows/trigger-agent-approval-check.yml@main
+        secrets: inherit
