@@ -1,7 +1,7 @@
 -- Migration 010: refs_backfilled tracking column.
 --
 -- Context (plan 02, PR 4/6):
---   Before the worker's NAR reference-scan fix (PR 2/6, commit 9165dc2),
+--   Before the worker's NAR reference-scan fix (PR 2/6, commit 108c49b),
 --   uploaded paths had narinfo.references = '{}'. Paths uploaded AFTER the
 --   fix have correct references. We need to distinguish the two so a
 --   background job can re-scan the pre-fix paths without touching the
