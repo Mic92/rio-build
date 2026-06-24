@@ -90,17 +90,18 @@ spec:
   blockDeviceMappings:
     - deviceName: /dev/xvda
       ebs:
-        volumeSize: {{ $k.dataVolumeSize }}
-        # gp3 with provisioned IOPS+throughput. Build workloads are
-        # IOPS-bound (NAR extract, cc1 -MMD dep writes, link); gp3
-        # baseline 3000 IOPS throttles -j32+. gp3 max is 16k IOPS /
-        # 1000 MiB/s — same IOPS we wanted from io2, but NO separate
-        # provisioned-IOPS account quota (io1/io2 cap at 300k/100k
-        # account-wide → 18/6 nodes at 16k each). io1/io2 once the
-        # quota increase lands (L-B3A130E6).
+        volumeSize: {{ $k.rootVolumeSize }}
+        # Root volume: OS + containerd image cache + journald. Build
+        # scratch lives on the quota volume (xvdb below) since
+        # live_060-a, so root IOPS provisioning is decoupled from
+        # build perf. The L-B3A130E6-gated io2 migration is retired:
+        # gp3's 80k IOPS / 2000 MiB/s ceiling (2025-09) covers fleet
+        # scale without io2's account-wide provisioned-IOPS quota.
+        # Past 80k/vol on 24xlarge+ is the Phase-2 RAID0 stripe
+        # (quotaVolume only), not io2.
         volumeType: gp3
-        iops: {{ $k.dataVolumeIops }}
-        throughput: {{ $k.dataVolumeThroughputMiBps }}
+        iops: {{ $k.rootVolumeIops }}
+        throughput: {{ $k.rootVolumeThroughputMiBps }}
         deleteOnTermination: true
         encrypted: true
   {{- if ne $nc.name "rio-nvme" }}
@@ -110,11 +111,8 @@ spec:
     # /var/lib/kubelet — the node precondition of the only
     # peak_disk_bytes producer (rio-builder quota.rs). rio-nvme is
     # excluded: instance-store RAID0 already owns /var/lib/kubelet
-    # with prjquota via rio-kubelet-mount's NVMe branch. Sizing: kubelet's
-    # ephemeral-storage allocatable derives from the fs hosting
-    # /var/lib/kubelet, so the pod_ephemeral_request inequality
-    # (see karpenter.dataVolumeSize) binds on THIS volume for these
-    # classes — quotaVolumeSize carries the 500Gi derivation.
+    # with prjquota via rio-kubelet-mount's NVMe branch. Sizing: see
+    # values.yaml `quotaVolumeSize` block.
     - deviceName: /dev/xvdb
       ebs:
         volumeSize: {{ $k.quotaVolumeSize }}

@@ -8,16 +8,29 @@
 /// `node_class == this` — see [`metal_partition_op`].
 pub const METAL_NODE_CLASS: &str = "rio-metal";
 
+/// `EC2NodeClass` name whose hw-classes mount instance-store NVMe
+/// (`instanceStorePolicy: RAID0`) instead of the EBS quota volume.
+/// `scheduler.yaml` injects the `instance-local-nvme Gt "0"` /
+/// `DoesNotExist` partition on `node_class == this`; the Rust mirror
+/// of that bijection (`config.rs::shipped_hw_classes`, helm test 56)
+/// keys on this const so the discriminant has ONE source of truth.
+pub const NVME_NODE_CLASS: &str = "rio-nvme";
+
 /// The §13c metal-partition predicate. A hw-class with `node_class ==
 /// `[`METAL_NODE_CLASS`] gets the `In` side of the
 /// `karpenter.k8s.aws/instance-size` requirement; every other class
 /// gets `NotIn`. Total over the partition: there is no third side —
 /// the `metalSizes` list either selects (metal) or excludes (everything
-/// else). Adding a third partition (e.g. a separate large-metal class)
-/// requires a new return variant here, which forces every caller —
-/// `cover::build_nodeclaim`, `catalog::derive_ceilings`,
-/// `probe_boot::mk_probe_nodeclaim`, and helm
-/// `templates/karpenter.yaml`'s `nodePools` loop — to handle it.
+/// else).
+///
+/// LEGACY altitude: this injects the requirement at NodeClaim-build
+/// time (Rust runtime) — `cover::build_nodeclaim`,
+/// `catalog::derive_ceilings`, `probe_boot::mk_probe_nodeclaim`. The
+/// nvme partition (see [`NVME_NODE_CLASS`]) instead injects at
+/// config-render altitude (`scheduler.yaml`), which is the pattern for
+/// NEW partitions: a single template-side bijection rendered into the
+/// hwClass `requirements` list, no per-caller Rust wiring. Adding a
+/// third partition should follow the nvme pattern, not extend this fn.
 pub fn metal_partition_op(node_class: &str) -> &'static str {
     if node_class == METAL_NODE_CLASS {
         "In"

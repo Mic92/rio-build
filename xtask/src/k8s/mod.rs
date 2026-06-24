@@ -404,6 +404,16 @@ pub enum K8sCmd {
     /// to settle. Run during a quiet window: gateway sessions on the
     /// drained nodes have up to `sessionDrainSecs` (1h) to finish.
     RotateGeneral,
+    /// Rotate `rio-store` Karpenter nodes onto the current AMI.
+    /// EKS-only. The rio-store NodePool has `budgets:0/Drifted`
+    /// (do-not-disrupt store pods + one-per-node anti-affinity +
+    /// WhenEmpty give Karpenter no Drifted convergence path), so AMI
+    /// changes leave its NodeClaims at `Drifted=True` indefinitely.
+    /// This deletes those NodeClaims so Karpenter re-provisions on
+    /// the new AMI, then waits for drift to settle. Run during a
+    /// quiet window: drain blocks on the StatefulSet rolling each
+    /// store replica onto its replacement node.
+    RotateStore,
     /// Run one SQL statement against the cluster's PostgreSQL via the
     /// in-cluster relay (`rio-qa-pg-relay` socat pod on EKS, direct
     /// port-forward on k3s). Operator surgery tool — there is no
@@ -578,6 +588,12 @@ pub async fn run(args: K8sArgs, cfg: &XtaskConfig) -> Result<()> {
                 bail!("`rotate-general` is EKS-only (Karpenter NodeClaims); pass -p eks");
             }
             eks::deploy::rotate_general().await
+        }
+        K8sCmd::RotateStore => {
+            if !matches!(kind, ProviderKind::Eks) {
+                bail!("`rotate-store` is EKS-only (Karpenter NodeClaims); pass -p eks");
+            }
+            eks::deploy::rotate_store().await
         }
         K8sCmd::Pg { sql } => pg_exec(&sql.join(" ")).await,
     }

@@ -14,20 +14,13 @@
 #
 # (documentary — .sh is not tracey-scanned.)
 
+. "$(dirname "$0")/_lib.sh"
+
 T=$TMPDIR/quota-volume-pin
 rm -rf "$T"; mkdir -p "$T"
 
-render() {
-  helm template rio . \
-    --set karpenter.enabled=true \
-    --set karpenter.amiTag=test \
-    --set karpenter.nodeRoleName=test \
-    --set karpenter.clusterName=test \
-    "$@" -s templates/karpenter.yaml
-}
-
 # ── the live surface: every EBS-only class carries the quota volume ──
-render > "$T/render.yaml"
+render_karpenter -s templates/karpenter.yaml > "$T/render.yaml"
 
 for nc in rio-default rio-metal; do
   awk -v nc="$nc" '
@@ -57,21 +50,13 @@ if grep -q 'deviceName: /dev/xvdb' "$T/rio-nvme.yaml"; then
   exit 1
 fi
 
-# ── the quota volume must cover the pod_ephemeral_request inequality ──
-# (kubelet's ephemeral-storage allocatable derives from the fs hosting
-# /var/lib/kubelet — on EBS classes that is THIS volume; the binding
-# inequality is documented at karpenter.dataVolumeSize.)
-qsize=$(yq -r '.karpenter.quotaVolumeSize' values.yaml)
-dsize=$(yq -r '.karpenter.dataVolumeSize' values.yaml)
-[ "$qsize" = "$dsize" ] || {
-  echo "FAIL: karpenter.quotaVolumeSize ($qsize) != dataVolumeSize ($dsize) —" >&2
-  echo "      the pod_ephemeral_request derivation moved to the quota volume" >&2
-  echo "      on EBS classes; re-derive BOTH or update this pin with the math" >&2
-  exit 1
-}
+# (max_node_disk = quotaVolumeSize × 0.9 arithmetic: 23-quantity-bytes.sh.
+#  The BINDING inequality `pod_ephemeral_request(maxDisk, headroom(1))
+#  ≤ max_node_disk`: 14-disk-ceiling.sh — re-derive THAT when
+#  quotaVolumeSize moves.)
 
 # ── planted RED: the no-quota builder pool shape is CAUGHT ──
-if render --set karpenter.quotaVolumeSize= 2>/dev/null \
+if render_karpenter -s templates/karpenter.yaml --set karpenter.quotaVolumeSize= 2>/dev/null \
     | awk '/^  name: rio-default$/{f=1} f&&/^---/{f=0} f' \
     | grep -A2 'deviceName: /dev/xvdb' | grep -qE 'volumeSize: *[0-9]'; then
   echo "FAIL: the nulled quotaVolumeSize still rendered a sized quota volume —" >&2
@@ -79,4 +64,4 @@ if render --set karpenter.quotaVolumeSize= 2>/dev/null \
   exit 1
 fi
 
-echo "quota-volume pin: rio-default+rio-metal carry /dev/xvdb (${qsize}); rio-nvme exempt; nulled-size red caught"
+echo "quota-volume pin: rio-default+rio-metal carry /dev/xvdb ($(yq -r '.karpenter.quotaVolumeSize' values.yaml)); rio-nvme exempt; nulled-size red caught"

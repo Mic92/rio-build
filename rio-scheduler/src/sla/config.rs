@@ -85,7 +85,7 @@ pub struct HwClassDef {
     /// the band-loop NodePool template this replaces selected the
     /// nodeClass by `$stor` — nvme classes need
     /// `instanceStorePolicy: RAID0` (only on `rio-nvme`); a single
-    /// scalar default would launch nvme builders on the EBS root
+    /// scalar default would launch nvme builders on the EBS quota
     /// volume.
     #[serde(default)]
     pub node_class: String,
@@ -680,7 +680,9 @@ impl ProbeShape {
 /// `kubernetes.io/arch` — the well-known node label every kubelet
 /// registers. Used by [`SlaConfig::reference_hw_class_for_system`] to
 /// arch-match an `HwClassDef`'s labels against `SpawnIntent.system`.
-pub const ARCH_LABEL: &str = "kubernetes.io/arch";
+/// Re-export of [`super::catalog::label::ARCH`] so the key string has
+/// ONE source of truth.
+pub use super::catalog::label::ARCH as ARCH_LABEL;
 
 /// `karpenter.sh/capacity-type` — Karpenter's well-known capacity
 /// label. ONE const for both the producer
@@ -1618,6 +1620,36 @@ impl SlaConfig {
                      `labels` instead.",
                     r.key
                 );
+                // k8s NodeSelectorRequirement operator/values coherence
+                // — the structural floor under helm's render-time
+                // `fail` guard. Without this an `In []` (or `Gt
+                // ["abc"]`) from a hand-edited ConfigMap or VM-test
+                // fixture passes validate_shape(), requirements_match()
+                // returns false for every catalog entry, and the class
+                // is silently warn-dropped to a (0,0) ceiling. Operator
+                // set is `catalog::VALID_OPERATORS` (single-sourced
+                // with `requirements_match`).
+                let n = r.values.len();
+                let ok = match r.operator.as_str() {
+                    "In" | "NotIn" => n > 0,
+                    "Gt" | "Lt" => n == 1 && r.values[0].parse::<i64>().is_ok(),
+                    "Exists" | "DoesNotExist" => n == 0,
+                    op => anyhow::bail!(
+                        "sla.hwClasses[{h}].requirements key {:?}: \
+                         unrecognized operator {op:?} (valid: {})",
+                        r.key,
+                        super::catalog::VALID_OPERATORS.join(" "),
+                    ),
+                };
+                anyhow::ensure!(
+                    ok,
+                    "sla.hwClasses[{h}].requirements key {:?}: operator {:?} \
+                     with values {:?} is invalid (In/NotIn need ≥1; Gt/Lt need \
+                     exactly 1 integer; Exists/DoesNotExist need 0)",
+                    r.key,
+                    r.operator,
+                    r.values,
+                );
             }
             // merged_bug_039 (the strict ArmDecode's SAME-COMMIT
             // precondition): the capacity key is PRODUCER-OWNED —
@@ -2070,33 +2102,20 @@ mod tests {
         (64, 256 << 30)
     }
 
-    /// `validate_shape() ∘ validate_resolved()` against the configured
-    /// `Some(max_cores, max_mem)` (the pre-§13c-3 `validate()` shape,
-    /// kept so the existing test corpus exercises both passes).
     /// Minimal catalog entry for the global/exclusion tests (amd64,
-    /// no nvme) — mirrors catalog::tests::ce without the cross-module
-    /// cfg(test) dependency.
+    /// no nvme) — delegates to the canonical
+    /// [`catalog::CatalogEntry::for_test`] builder.
     fn cat_entry(name: &str, cores: u32, mem_gib: u64) -> super::super::catalog::CatalogEntry {
-        shipped_cat_entry(
-            &name
-                .chars()
-                .take_while(|c| c.is_ascii_alphabetic())
-                .collect::<String>(),
-            &name
-                .chars()
-                .skip_while(|c| c.is_ascii_alphabetic())
-                .take_while(|c| c.is_ascii_digit())
-                .collect::<String>(),
-            name.split_once('.').map(|(_, s)| s).unwrap_or(""),
-            cores,
-            mem_gib,
-            "amd64",
-            0,
-        )
+        super::super::catalog::CatalogEntry::for_test(name, cores, mem_gib, "amd64", 0)
     }
 
     /// Catalog entry from explicit Karpenter attrs (the phantom-shape
     /// census synthesizes these from each class's own requirements).
+    /// Delegates to [`CatalogEntry::for_test`] via a synthesized
+    /// `{cat}{gen}i.{size}` name that [`parse_family`] round-trips.
+    ///
+    /// [`CatalogEntry::for_test`]: super::super::catalog::CatalogEntry::for_test
+    /// [`parse_family`]: super::super::catalog
     fn shipped_cat_entry(
         category: &str,
         generation: &str,
@@ -2106,27 +2125,21 @@ mod tests {
         arch: &str,
         nvme_gb: i64,
     ) -> super::super::catalog::CatalogEntry {
-        let mut labels = std::collections::BTreeMap::new();
-        labels.insert("karpenter.k8s.aws/instance-category", category.to_owned());
-        labels.insert(
-            "karpenter.k8s.aws/instance-generation",
-            generation.to_owned(),
-        );
-        labels.insert("karpenter.k8s.aws/instance-size", size.to_owned());
-        labels.insert(ARCH_LABEL, arch.to_owned());
-        labels.insert("karpenter.k8s.aws/instance-local-nvme", nvme_gb.to_string());
-        labels.insert(
-            "karpenter.k8s.aws/instance-cpu-manufacturer",
-            "intel".to_owned(),
-        );
-        super::super::catalog::CatalogEntry {
-            name: format!("{category}{generation}i.{size}"),
+        use super::super::catalog::{CatalogEntry, label};
+        let mut e = CatalogEntry::for_test(
+            &format!("{category}{generation}i.{size}"),
             cores,
-            mem_bytes: mem_gib << 30,
-            labels,
-        }
+            mem_gib,
+            arch,
+            nvme_gb,
+        );
+        e.labels.insert(label::CPU_MANUFACTURER, "intel".into());
+        e
     }
 
+    /// `validate_shape() ∘ validate_resolved()` against the configured
+    /// `Some(max_cores, max_mem)` (the pre-§13c-3 `validate()` shape,
+    /// kept so the existing test corpus exercises both passes).
     fn validate_both(cfg: &SlaConfig) -> anyhow::Result<()> {
         cfg.validate_shape()?;
         let global = (
@@ -2775,6 +2788,56 @@ mod tests {
                 }
                 (None, Ok(())) => {}
                 (e, r) => panic!("({mc:?},{mm:?}): expect {e:?}, got {r:?}"),
+            }
+        }
+    }
+
+    /// validate_shape's `(operator, values)` coherence check: arity per
+    /// `catalog::VALID_OPERATORS`, Gt/Lt must parse i64, and an
+    /// unrecognized operator gets a DISTINCT message naming the valid
+    /// set (a case-typo `gt` with 1 value otherwise reads "Gt/Lt need
+    /// exactly 1" — which the operator already satisfies).
+    #[test]
+    fn rejects_hw_class_requirement_operator_values() {
+        let mk = |op: &str, vals: &[&str]| {
+            let mut cfg = base();
+            cfg.hw_classes.get_mut("test-hw").unwrap().requirements = vec![NodeSelectorReq {
+                key: "karpenter.k8s.aws/instance-generation".into(),
+                operator: op.into(),
+                values: vals.iter().map(|s| (*s).into()).collect(),
+            }];
+            cfg.validate_shape()
+        };
+        for (op, vals, want) in [
+            ("In", &[][..], Some("In/NotIn need")),
+            ("NotIn", &[], Some("In/NotIn need")),
+            ("Gt", &["5", "6"], Some("exactly 1 integer")),
+            ("Lt", &[], Some("exactly 1 integer")),
+            // Gt/Lt with a non-integer value: arity OK, parse not —
+            // `num_cmp` would silently no-match. The error message
+            // shows the offending value.
+            ("Gt", &["O"], Some("exactly 1 integer")),
+            ("Lt", &["abc"], Some("exactly 1 integer")),
+            ("Exists", &["x"], Some("Exists/DoesNotExist need 0")),
+            ("DoesNotExist", &["x"], Some("Exists/DoesNotExist need 0")),
+            // Unrecognized → distinct message naming the valid set,
+            // NOT the arity table.
+            ("gt", &["5"], Some("In NotIn Gt Lt Exists DoesNotExist")),
+            ("Gte", &["5"], Some("unrecognized operator")),
+            // OK shapes pass.
+            ("In", &["7"], None),
+            ("Gt", &["0"], None),
+            ("Lt", &["100"], None),
+            ("Exists", &[], None),
+            ("DoesNotExist", &[], None),
+        ] {
+            match (want, mk(op, vals)) {
+                (Some(w), Err(e)) => {
+                    let s = e.to_string();
+                    assert!(s.contains(w), "({op:?},{vals:?}): want {w:?}, got {s}");
+                }
+                (None, Ok(())) => {}
+                (w, r) => panic!("({op:?},{vals:?}): expect {w:?}, got {r:?}"),
             }
         }
     }
@@ -4042,13 +4105,40 @@ mod tests {
     }
 
     /// Build the production `HwClassDef` map from the parsed shipped
-    /// rows (field-by-field, the same projection the helm template +
-    /// TOML parse performs).
+    /// rows. Mirrors the helm template's `requirements` projection
+    /// (incl. the template-injected nvme partition); the template's
+    /// `unlaunchableSizes NotIn` injection is NOT mirrored here — it
+    /// is threaded as the `exclusions` parameter to `derive_ceilings`.
     fn shipped_hw_classes(sla_v: &shipped::SlaV) -> HashMap<HwClassName, HwClassDef> {
+        use super::super::catalog::label;
         sla_v
             .hw_classes
             .iter()
             .map(|(h, d)| {
+                // scheduler.yaml injects the instance-local-nvme
+                // partition template-side as a single-source bijection
+                // (`Gt "0"` ⇔ nodeClass=NVME_NODE_CLASS, else
+                // `DoesNotExist`); mirror it so the rust shipped::
+                // projection carries the production requirement set.
+                // INTENTIONAL DUPLICATION: helm can't read Rust consts;
+                // helm test 56(a) asserts the rendered output matches
+                // this same bijection so divergence fails CI. The
+                // template's adjacent unlaunchableSizes NotIn injection
+                // is NOT mirrored here — it is threaded through
+                // `derive_ceilings`'s `exclusions` parameter instead.
+                let nvme_req = if d.node_class == rio_common::k8s::NVME_NODE_CLASS {
+                    NodeSelectorReq {
+                        key: label::LOCAL_NVME.into(),
+                        operator: "Gt".into(),
+                        values: vec!["0".into()],
+                    }
+                } else {
+                    NodeSelectorReq {
+                        key: label::LOCAL_NVME.into(),
+                        operator: "DoesNotExist".into(),
+                        values: vec![],
+                    }
+                };
                 (
                     h.clone(),
                     HwClassDef {
@@ -4063,11 +4153,30 @@ mod tests {
                         requirements: d
                             .requirements
                             .iter()
+                            .inspect(|r| {
+                                // Mirror scheduler.yaml's template-
+                                // owned-key guard so an authored
+                                // instance-local-nvme key fails HERE
+                                // with the same diagnostic instead of
+                                // chaining `[Gt 0, …, DoesNotExist]`
+                                // → 0-match → misleading "(0,0)
+                                // ceiling" assert downstream.
+                                assert_ne!(
+                                    r.key,
+                                    label::LOCAL_NVME,
+                                    "shipped hwClasses[{h}]: key {:?} is \
+                                     template-owned (scheduler.yaml injects \
+                                     the nvme partition); remove from \
+                                     values.yaml hwClasses requirements",
+                                    r.key,
+                                );
+                            })
                             .map(|r| NodeSelectorReq {
                                 key: r.key.clone(),
                                 operator: r.operator.clone(),
                                 values: r.values.clone().unwrap_or_default(),
                             })
+                            .chain(std::iter::once(nvme_req))
                             .collect(),
                         node_class: d.node_class.clone(),
                         max_cores: d.max_cores,
@@ -4431,14 +4540,15 @@ mod tests {
             let mut d = test_def("rio.build/hw-band", "hi");
             d.max_cores = None;
             d.max_mem = None;
+            use super::super::catalog::label;
             d.requirements = vec![
                 NodeSelectorReq {
-                    key: "karpenter.k8s.aws/instance-category".into(),
+                    key: label::CATEGORY.into(),
                     operator: "In".into(),
                     values: vec!["c".into(), "m".into(), "r".into()],
                 },
                 NodeSelectorReq {
-                    key: "karpenter.k8s.aws/instance-generation".into(),
+                    key: label::GENERATION.into(),
                     operator: "In".into(),
                     values: vec!["8".into()],
                 },
@@ -4677,22 +4787,41 @@ mod tests {
         let metal_sizes = root.karpenter.metal_sizes.clone();
         let exclusions = root.karpenter.unlaunchable_sizes.clone();
         assert!(!exclusions.is_empty(), "committed exclusion list present");
+        use super::super::catalog::label;
         for (h, def) in &classes {
             // Synthesize attrs the class's own requirements admit.
             let mut category = "c".to_string();
             let mut generation = "8".to_string();
+            // shipped_hw_classes() mirrors scheduler.yaml's
+            // template-injected nvme partition, so every class carries
+            // exactly one LOCAL_NVME requirement. Synthesize an nvme
+            // value the requirement ADMITS so the control row matches:
+            //   Gt/Exists/In   → nvme=5700 (present, large)
+            //   DoesNotExist/NotIn → nvme=0 (label absent via
+            //                       maybe_nvme_label)
+            //   Lt             → nvme=1 (Lt REQUIRES presence —
+            //                    `num_cmp(None, _)` is None — so
+            //                    absent fails; 1 satisfies any `Lt N`
+            //                    for N>1, and `Lt "1"` is degenerate)
+            // Covers every `catalog::VALID_OPERATORS` shape so a
+            // future hwClass with `Exists`/`Lt` doesn't panic the
+            // control-row premise-reachability assert below.
+            let mut nvme = 0;
             for r in &def.requirements {
                 match (r.key.as_str(), r.operator.as_str()) {
-                    ("karpenter.k8s.aws/instance-category", "In") => {
+                    (label::CATEGORY, "In") => {
                         category = r.values.first().cloned().unwrap_or(category);
                     }
-                    ("karpenter.k8s.aws/instance-generation", "In") => {
+                    (label::GENERATION, "In") => {
                         generation = r.values.iter().max().cloned().unwrap_or(generation.clone());
                     }
-                    ("karpenter.k8s.aws/instance-generation", "Gt") => {
+                    (label::GENERATION, "Gt") => {
                         let n: i64 = r.values[0].parse().unwrap();
                         generation = (n + 3).to_string();
                     }
+                    (label::LOCAL_NVME, "Gt" | "Exists" | "In") => nvme = 5700,
+                    (label::LOCAL_NVME, "Lt") => nvme = 1,
+                    // DoesNotExist/NotIn → nvme stays 0 (init above).
                     _ => {}
                 }
             }
@@ -4702,16 +4831,7 @@ mod tests {
                 .find(|l| l.key == ARCH_LABEL)
                 .map(|l| l.value.clone())
                 .unwrap_or_else(|| "amd64".into());
-            let nvme = if def
-                .requirements
-                .iter()
-                .any(|r| r.key == "karpenter.k8s.aws/instance-local-nvme")
-            {
-                5700
-            } else {
-                0
-            };
-            let is_metal = def.node_class == "rio-metal";
+            let is_metal = def.node_class == rio_common::k8s::METAL_NODE_CLASS;
             let control_size = if is_metal { "metal-48xl" } else { "48xlarge" };
             for excluded in &exclusions {
                 let phantom =

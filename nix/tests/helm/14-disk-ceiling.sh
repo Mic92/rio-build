@@ -10,7 +10,7 @@
 # multi-pod case structurally).
 #
 # Single-source: assert against the helm-RENDERED `max_node_disk`
-# (= dataVolumeSize × 0.9 in templates/controller.yaml) instead of
+# (= quotaVolumeSize × 0.9 in templates/controller.yaml) instead of
 # re-deriving the kubelet-reserve fraction here — two open-coded
 # constants (×0.9 vs ×1/1.1) aren't inverses and the gap between them
 # was a lint pass-gap (r26 bug_028).
@@ -39,7 +39,7 @@ test "$max_node_disk" -ge "$need" || {
   echo "FAIL: controller.toml max_node_disk=$max_node_disk B < required $need B" >&2
   echo "  = sla.maxDisk × 1.95 + 1Gi" >&2
   echo "  = $max_disk × 1.95 + $LOG_BUDGET_BYTES" >&2
-  echo "  raise karpenter.dataVolumeSize (max_node_disk = dataVolumeSize × 0.9)" >&2
+  echo "  raise karpenter.quotaVolumeSize (max_node_disk = quotaVolumeSize × 0.9)" >&2
   exit 1
 }
 
@@ -50,7 +50,7 @@ test "$max_node_disk" -ge "$need" || {
 # jobs.rs::pod_ephemeral_request), so the helm value and the rust
 # accounting cannot drift silently. Inputs: defaultDisk,
 # LOG_BUDGET_BYTES, the no-estimate headroom arm, and the
-# density-input row (allocatable = karpenter.dataVolumeSize × 0.9).
+# density-input row (allocatable = karpenter.quotaVolumeSize × 0.9).
 # Touch ANY input ⇒ re-derive the whole table (narration rows + these
 # asserts together).
 # The per-pod fuse-cache addend is GONE since P0560/ADR-022 (castore
@@ -77,12 +77,12 @@ test "$default_req" = "41339060224" || {
   echo "  38.5 GiB row (41339060224 B = 25×1.5 + 1 log GiB)" >&2
   exit 1
 }
-# Density-input row: allocatable = dataVolumeSize × 0.9 (the same
+# Density-input row: allocatable = quotaVolumeSize × 0.9 (the same
 # kubelet-reserve fraction max_node_disk renders from), pods/node =
 # floor(allocatable / request). 500Gi × 0.9 = 450 GiB.
-data_vol=$(yq '.karpenter.dataVolumeSize' values.yaml)
-test "$data_vol" = "500Gi" || {
-  echo "FAIL: karpenter.dataVolumeSize=$data_vol != 500Gi — the W10-CP" >&2
+quota_vol=$(yq '.karpenter.quotaVolumeSize' values.yaml)
+test "$quota_vol" = "500Gi" || {
+  echo "FAIL: karpenter.quotaVolumeSize=$quota_vol != 500Gi — the W10-CP" >&2
   echo "  pods/node rows assume 450 GiB allocatable; re-derive the table" >&2
   exit 1
 }

@@ -33,6 +33,12 @@ render_controller_toml() {
   render_karpenter "$@" | toml_body rio-controller-config controller.toml
 }
 
+# render_karpenter "$@" | scheduler.toml body — sibling of the above
+# for the [sla] hw_classes / requirements tests.
+render_scheduler_toml() {
+  render_karpenter "$@" | toml_body rio-scheduler-config scheduler.toml
+}
+
 # Read an integer-valued top-level TOML key from stdin. `|| true`
 # inside the pipelines: grep's no-match exit must reach the CALLER's
 # dedicated failure message, not die silently in a `set -e` command

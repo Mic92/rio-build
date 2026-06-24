@@ -1,37 +1,47 @@
-# Every `[sla.hw_classes.*]` entry rendered into scheduler.toml MUST carry
-# a non-empty `requirements` list — `SlaConfig::validate` (config.rs)
-# rejects an empty one and the scheduler crash-loops. bug_044: the
-# vmtest-full.yaml overlay defined `hwClasses.vmtest` with `labels` only;
-# helm rendered `requirements = []` and 14 k3sFull VM scenarios timed out
-# on scheduler boot. Static catch here at helm-lint, not at runtime.
+# Every `scheduler.sla.hwClasses.*` entry MUST carry a non-empty
+# AUTHORED `requirements` list. bug_044: the vmtest-full.yaml overlay
+# defined `hwClasses.vmtest` with `labels` only; helm rendered
+# `requirements = []`, `SlaConfig::validate` rejected it, and 14
+# k3sFull VM scenarios timed out on scheduler crash-loop.
 #
-# Checks both the prod chart defaults AND the vmtest-full overlay (the
-# overlay merges atop prod values, so a missing key falls through to []).
+# scheduler.yaml now unconditionally injects the instance-local-nvme
+# partition requirement (Gt "0" / DoesNotExist) into every class, so
+# the RENDERED `requirements` is never empty — checking the rendered
+# TOML is structurally vacuous. Check the AUTHORED values instead: a
+# class with `requirements: []` (or omitted) would match every
+# ebs-only instance type across all categories/generations/arches —
+# the over-broad-ceiling shape the original guard existed to catch.
+# The Rust-side `!def.requirements.is_empty()` ensure (config.rs)
+# retains value for non-helm config paths.
 
-check_render() {
-  local label="$1"; shift
-  helm template rio . --set global.image.tag=test "$@" 2>/dev/null \
-    | yq -N 'select(.kind=="ConfigMap" and .metadata.name=="rio-scheduler-config")
-             | .data."scheduler.toml"' \
-    > "$TMPDIR/sched-$label.toml"
-  # Find every `[sla.hw_classes."NAME"]` followed within the block by an
-  # empty `requirements = [` `]` (the gotmpl renders the open-bracket on
-  # one line, range body fills it, close-bracket on the next when empty).
-  bad=$(awk '
-    /^\[sla\.hw_classes\./ { h=$0; sub(/.*"/,"",h); sub(/".*/,"",h) }
-    /^requirements = \[$/   { empty=1; next }
-    empty && /^\]$/         { print h; empty=0; next }
-    empty                   { empty=0 }
-  ' "$TMPDIR/sched-$label.toml")
+check_authored() {
+  local label="$1" file="$2"
+  # to_entries → name + requirements length per class. yq emits
+  # `null` for an absent key; `// [] | length` normalizes to 0.
+  bad=$(yq '
+    .scheduler.sla.hwClasses // {}
+    | to_entries[]
+    | select((.value.requirements // [] | length) == 0)
+    | .key' "$file")
   if [ -n "$bad" ]; then
-    echo "FAIL ($label): hwClasses with empty requirements: $bad" >&2
-    echo "  SlaConfig::validate rejects this — scheduler crash-loops at boot" >&2
+    echo "FAIL ($label): hwClasses with empty/absent authored requirements:" >&2
+    printf '%s\n' "$bad" | sed 's/^/    /' >&2
+    echo "  (only constraint would be the template-injected nvme partition —" >&2
+    echo "   class matches every ebs-only instance type; over-broad ceiling)" >&2
     return 1
   fi
+  n=$(yq '.scheduler.sla.hwClasses // {} | length' "$file")
+  echo "  $label: $n hwClasses, all with non-empty authored requirements"
 }
 
-check_render prod \
-  --set karpenter.enabled=true --set karpenter.clusterName=ci \
-  --set karpenter.nodeRoleName=ci-role --set karpenter.amiTag=test \
-  --set postgresql.enabled=false
-check_render vmtest-full -f values/vmtest-full.yaml
+# Non-degeneracy: prod values.yaml MUST define at least one class (a
+# path/key rename would otherwise pass vacuously via `// {}`).
+n_prod=$(yq '.scheduler.sla.hwClasses | length' values.yaml)
+[ "${n_prod:-0}" -gt 0 ] || {
+  echo "FAIL: prod values.yaml .scheduler.sla.hwClasses is empty/absent" >&2
+  echo "      (key path renamed? this check is vacuous)" >&2
+  exit 1
+}
+
+check_authored prod values.yaml
+check_authored vmtest-full values/vmtest-full.yaml

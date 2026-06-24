@@ -315,7 +315,6 @@ rio-builder/src/executor/mod.rs	/// override seams. The compiler enforces the al
 rio-builder/src/executor/mod.rs	/// sees the `Ok`. `Quiesced` is the ONLY outcome that lets an `Ok`
 rio-builder/src/executor/mod.rs	/// so a footer is sent whenever ANY attempt ran a daemon: an
 rio-builder/src/executor/monitors.rs	/// the ONLY value that permits output collection — deny-on-failure:
-rio-builder/src/hw_bench.rs	/// (gp3 root volume at default 125 MB/s provisioned throughput).
 rio-builder/src/hw_bench.rs	/// Per-array bytes for [`stream_triad_gbps`]. Prod default 1.5 GiB
 rio-builder/src/log_stream.rs	// 10 lines in <1s: first 5 buffered, next 5 dropped. ALL return
 rio-builder/src/log_stream.rs	// The store truncates every accepted line to the SAME kernel

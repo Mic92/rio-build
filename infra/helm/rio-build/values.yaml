@@ -795,7 +795,7 @@ scheduler:
     #                      + 1 GiB log budget
     #   at 100 GiB: 151   GiB request → 450 GiB allocatable:  2 pods/node
     #   at  25 GiB:  38.5 GiB request → 450 GiB allocatable: 11 pods/node
-    #   (allocatable = karpenter.dataVolumeSize 500Gi × 0.9; the
+    #   (allocatable = karpenter.quotaVolumeSize 500Gi × 0.9; the
     #   12xlarge nvme class measured 12 pods/node at the B8 live
     #   specimen's 201 GiB ask ⇒ allocatable ∈ [2412, 2613) GiB — a
     #   band over instance-store capacities, narration-only.)
@@ -900,7 +900,6 @@ scheduler:
           - {key: karpenter.k8s.aws/instance-category, operator: In, values: [c, m, r]}
           - {key: karpenter.k8s.aws/instance-generation, operator: In, values: ["8"]}
           - {key: kubernetes.io/arch, operator: In, values: [amd64]}
-          - {key: karpenter.k8s.aws/instance-local-nvme, operator: Gt, values: ["0"]}
       hi-nvme-arm:
         nodeClass: rio-nvme
         capacityTypes: [spot, on-demand]
@@ -915,7 +914,6 @@ scheduler:
           - {key: karpenter.k8s.aws/instance-category, operator: In, values: [c, m, r]}
           - {key: karpenter.k8s.aws/instance-generation, operator: In, values: ["8"]}
           - {key: kubernetes.io/arch, operator: In, values: [arm64]}
-          - {key: karpenter.k8s.aws/instance-local-nvme, operator: Gt, values: ["0"]}
       hi-ebs-x86:
         nodeClass: rio-default
         capacityTypes: [spot, on-demand]
@@ -971,7 +969,6 @@ scheduler:
           # ceiling excludes the class and the gen8→g7 rung is a no-op.
           - {key: karpenter.k8s.aws/instance-generation, operator: In, values: ["6", "7"]}
           - {key: kubernetes.io/arch, operator: In, values: [amd64]}
-          - {key: karpenter.k8s.aws/instance-local-nvme, operator: Gt, values: ["0"]}
       hi-nvme-arm-g7:
         nodeClass: rio-nvme
         capacityTypes: [spot, on-demand]
@@ -987,7 +984,6 @@ scheduler:
           - {key: karpenter.k8s.aws/instance-category, operator: In, values: [c, m, r]}
           - {key: karpenter.k8s.aws/instance-generation, operator: In, values: ["7"]}
           - {key: kubernetes.io/arch, operator: In, values: [arm64]}
-          - {key: karpenter.k8s.aws/instance-local-nvme, operator: Gt, values: ["0"]}
       hi-ebs-x86-g7:
         nodeClass: rio-default
         capacityTypes: [spot, on-demand]
@@ -1026,7 +1022,6 @@ scheduler:
           - {key: karpenter.k8s.aws/instance-category, operator: In, values: [c, m, r]}
           - {key: karpenter.k8s.aws/instance-generation, operator: In, values: ["6", "7"]}
           - {key: kubernetes.io/arch, operator: In, values: [amd64]}
-          - {key: karpenter.k8s.aws/instance-local-nvme, operator: Gt, values: ["0"]}
       mid-nvme-arm:
         nodeClass: rio-nvme
         labels:
@@ -1037,7 +1032,6 @@ scheduler:
           - {key: karpenter.k8s.aws/instance-category, operator: In, values: [c, m, r]}
           - {key: karpenter.k8s.aws/instance-generation, operator: In, values: ["6", "7"]}
           - {key: kubernetes.io/arch, operator: In, values: [arm64]}
-          - {key: karpenter.k8s.aws/instance-local-nvme, operator: Gt, values: ["0"]}
       mid-ebs-x86:
         nodeClass: rio-default
         # sh-016 (c): terminal sentinel — `rungs: []` marks an
@@ -1074,7 +1068,6 @@ scheduler:
           - {key: karpenter.k8s.aws/instance-category, operator: In, values: [c, m, r]}
           - {key: karpenter.k8s.aws/instance-generation, operator: In, values: ["6"]}
           - {key: kubernetes.io/arch, operator: In, values: [amd64]}
-          - {key: karpenter.k8s.aws/instance-local-nvme, operator: Gt, values: ["0"]}
       lo-nvme-arm:
         nodeClass: rio-nvme
         labels:
@@ -1085,7 +1078,6 @@ scheduler:
           - {key: karpenter.k8s.aws/instance-category, operator: In, values: [c, m, r]}
           - {key: karpenter.k8s.aws/instance-generation, operator: In, values: ["6"]}
           - {key: kubernetes.io/arch, operator: In, values: [arm64]}
-          - {key: karpenter.k8s.aws/instance-local-nvme, operator: Gt, values: ["0"]}
       lo-ebs-x86:
         nodeClass: rio-default
         labels:
@@ -1575,27 +1567,26 @@ karpenter:
   # "use whatever was last tagged".
   amiTag: ""
   # Root volume (/dev/xvda — single root, NixOS doesn't split OS/data).
-  # boot.growPartition expands / to fill on first boot. MUST cover the
-  # largest pod ephemeral-storage request a NodeClaim can carry:
-  # pod_ephemeral_request(sla.maxDisk, headroom(n_eff=1))
-  #   = maxDisk × 1.95 + 1Gi   (worst-case headroom; jobs.rs::pod_ephemeral_request)
-  #   = 200×1.95 + 1 = 391Gi
-  # `max_node_disk` is dataVolumeSize × 0.9 (kubelet eviction/image-cache
-  # reserve), so the binding inequality is 500×0.9 = 450 ≥ 391. The
-  # node-level /var/rio castore caches (mountd-owned, P0571
-  # watermark-evicted) do NOT draw from this volume: on EBS classes
-  # they live on the dedicated rioVolume below, on nvme classes on the
-  # instance-store stripe (which also provides ephemeral-storage, so
-  # nvme classes ignore this knob). Neither appears in any per-pod
-  # request.
-  dataVolumeSize: 500Gi
-  # gp3 provisioned IOPS+throughput (max for gp3). Build workloads are
-  # IOPS-bound; baseline 3000 throttles -j32+. gp3 has no separate
-  # provisioned-IOPS account quota — io1/io2 do (300k/100k → 18/6
-  # nodes at 16k each). Switch to io1/io2 after quota increase
-  # (L-B3A130E6) lands.
-  dataVolumeIops: 16000
-  dataVolumeThroughputMiBps: 1000
+  # boot.growPartition expands / to fill on first boot. Holds the
+  # NixOS system closure (~4.0Gi measured AMI logical_bytes) +
+  # /var/lib/containerd (containerd-config.nix root: ~0.2Gi seeded
+  # rio-builder snapshot via containerd-seed-warm with
+  # discard_unpacked_layers; ~1.5Gi runtime-pulled cilium-agent +
+  # eks-pod-identity + node-exporter; mountd/builder pods digest-
+  # dedupe with the seed) + journald (default SystemMaxUse=min(10%,
+  # 4Gi)) + /var/log/pods (~0.8Gi at 50Mi×15). Worst-case ~13Gi;
+  # kubelet image-GC at 85%/80% on 40Gi → 34Gi line (>2.5×
+  # headroom). No build data lives here — /var/lib/kubelet
+  # (ephemeral-storage, build scratch) is on quotaVolume; /var/rio
+  # (castore/staging) is on rioVolume (EBS classes) or the
+  # instance-store stripe (nvme). max_node_disk and the
+  # pod_ephemeral_request inequality bind on quotaVolumeSize. The
+  # L-B3A130E6-gated io2 migration plan is retired — see
+  # quotaVolumeIops. gp3 baseline IOPS/throughput: root carries no
+  # build I/O.
+  rootVolumeSize: 40Gi
+  rootVolumeIops: 3000
+  rootVolumeThroughputMiBps: 125
   # live_060-a: the dedicated kubelet quota volume (second EBS
   # mapping, /dev/xvdb) for the EBS-only classes (rio-default/
   # rio-metal). Mounted xfs `-o prjquota` at /var/lib/kubelet by the
@@ -1603,16 +1594,25 @@ karpenter:
   # emptyDirs and rio-builder's quota.rs produces peak_disk_bytes —
   # the fleet precondition that was never true (159/160 EBS-only
   # nodes, 2022/2022 completions None). With /var/lib/kubelet on
-  # THIS volume, the pod_ephemeral_request inequality documented at
-  # dataVolumeSize binds here for EBS classes: 500×0.9 = 450 ≥ 441.
-  # The root volume keeps its size for the image cache + system; its
-  # scratch headroom is now redundant on EBS classes — resizing it
-  # is a post-soak optimization, recorded in the live_060 readback,
-  # not taken here. IOPS/throughput mirror the data volume: the
-  # build scratch is the IOPS-bound surface and it lives here now.
+  # THIS volume, the pod_ephemeral_request inequality binds here for
+  # EBS classes (max_node_disk reads quotaVolumeSize):
+  #   pod_ephemeral_request(sla.maxDisk, headroom(n_eff=1))
+  #     = maxDisk × 1.95 + 1Gi   (jobs.rs::pod_ephemeral_request)
+  #     = 200×1.95 + 1 = 391Gi
+  #   max_node_disk = quotaVolumeSize × 0.9 = 500×0.9 = 450 ≥ 391
+  # 14-disk-ceiling.sh asserts this from the rendered controller.toml.
   quotaVolumeSize: 500Gi
-  quotaVolumeIops: 16000
-  quotaVolumeThroughputMiBps: 1000
+  # gp3 provisioned IOPS+throughput at the 80k/2000 ceiling (2025-09).
+  # Build scratch is the IOPS-bound surface (NAR extract, cc1 -MMD dep
+  # writes, link); baseline 3000 throttles -j32+. ~11 pods share this
+  # volume, so 80k → ~7.3k/pod sustained where the Nitro per-instance
+  # cap allows it (per-size, family-agnostic: 4xl=20k, 8xl=40k,
+  # 12xl=60k, 16xl=80k, 24xl=120k, 32xl=160k; smaller instances clamp
+  # regardless of provisioning). Phase-2 RAID0 (2×80k stripe →
+  # 160k aggregate) is gated on post-80k iostat showing xvdb pegged
+  # on the 24xlarge+ fraction of node-hours.
+  quotaVolumeIops: 80000
+  quotaVolumeThroughputMiBps: 2000
   # Dedicated /var/rio volume (/dev/xvdc) on rio-default/rio-metal —
   # XFS with prjquota, formatted+mounted by the AMI's rio-ebs-mount
   # unit when the node has no instance-store NVMe. rio-mountd needs a
@@ -1627,13 +1627,14 @@ karpenter:
   # concurrent builds per node × stagingQuotaBytes, on top of cache
   # headroom.
   rioVolumeSize: 200Gi
-  # Same gp3 max IOPS/throughput as the root volume: the castore read
-  # path and staging writes are the same IOPS-bound build I/O. Cost
-  # knob: lower these (and the size) if EBS classes are only overflow
-  # capacity. Note that instance-store (d-type) instance types landing
-  # in the rio-default/rio-metal classes leave this volume entirely
-  # unused — rio-kubelet-mount claims /var/rio there — so on those nodes
-  # it is pure cost.
+  # The castore read path and staging writes are IOPS-bound build I/O,
+  # but on a separate Nitro budget axis from the quota volume (xvdc has
+  # its own 16k provisioning, not shared with xvdb). Cost knob: lower
+  # these (and the size) if EBS classes are only overflow capacity.
+  # scheduler.yaml injects the instance-local-nvme partition on every
+  # hwClass (`Gt "0"` ⇔ nodeClass=rio-nvme, `DoesNotExist` otherwise)
+  # — d-variants cannot land on rio-default/rio-metal, so xvdb+xvdc
+  # are never attached-unmounted.
   rioVolumeIops: 16000
   rioVolumeThroughputMiBps: 1000
 
@@ -1741,6 +1742,16 @@ karpenter:
       limits: {cpu: 1500}
       consolidationPolicy: WhenEmpty
       consolidateAfter: 5m
+      # Same Drifted=0 posture as rio-general: do-not-disrupt store
+      # pods + one-per-node anti-affinity + WhenEmpty mean Karpenter
+      # has NO Drifted convergence path (a node never empties while
+      # its store pod lives). Without this budget Karpenter retries
+      # disruption forever; with it, drift is held until `xtask k8s
+      # rotate-store`. `xtask k8s deploy --wait-drift` skips this
+      # pool (DRIFT_SKIP_NODEPOOLS; helm test 57 enforces parity).
+      budgets:
+        - nodes: "0"
+          reasons: [Drifted]
 
     # General: untainted, for future gateway/scheduler HPA overflow.
     # System nodegroup (min=3 max=5) handles today's load; this absorbs

@@ -508,7 +508,7 @@ pub struct NodeClaimPoolConfig {
     /// 6h default per ADR §13b.
     pub sketch_halflife_secs: u64,
     /// Per-NodeClaim `resources.requests.ephemeral-storage` ceiling.
-    /// Helm: derived from `karpenter.dataVolumeSize` × allocatable
+    /// Helm: derived from `karpenter.quotaVolumeSize` × allocatable
     /// fraction (kubelet reserve ≈10%). nvme cells get instance-store
     /// (much larger) so this only binds ebs cells.
     pub max_node_disk: u64,
@@ -779,8 +779,8 @@ impl Default for NodeClaimPoolConfig {
             // scheduler's resolved global over `GetHwClassConfig`
             // (see `HwClassConfig::global_ceilings`); the controller
             // is air-gapped and cannot self-derive. Disk is the only
-            // local ceiling (derived from `karpenter.dataVolumeSize`).
-            // ≈ 500Gi `dataVolumeSize` × 90% allocatable.
+            // local ceiling (derived from `karpenter.quotaVolumeSize`).
+            // ≈ 500Gi `quotaVolumeSize` × 90% allocatable.
             max_node_disk: 450 * (1 << 30),
             // sh-043: GLOBAL concurrent-unlaunched ceiling — see the
             // `max_inflight_unlaunched` field doc for the 50

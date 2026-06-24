@@ -86,14 +86,53 @@ pub type CatalogCeilings = HashMap<String, (u32, u64)>;
 /// match the `karpenter.k8s.aws/*` labels Karpenter's discovery stamps
 /// at launch — the same keys [`HwClassDef::requirements`] selects on.
 /// `kubernetes.io/arch` is included so `arch In [amd64]` requirements
-/// work without special-casing.
-mod label {
+/// work without special-casing. `pub(crate)`: config.rs and the
+/// sla_contract fixtures import these so the key strings have ONE
+/// source of truth (the omit-at-0 sweep had to patch three open-coded
+/// copies in parallel commits).
+pub(crate) mod label {
     pub const CATEGORY: &str = "karpenter.k8s.aws/instance-category";
     pub const GENERATION: &str = "karpenter.k8s.aws/instance-generation";
     pub const SIZE: &str = "karpenter.k8s.aws/instance-size";
     pub const LOCAL_NVME: &str = "karpenter.k8s.aws/instance-local-nvme";
     pub const CPU_MANUFACTURER: &str = "karpenter.k8s.aws/instance-cpu-manufacturer";
     pub const ARCH: &str = "kubernetes.io/arch";
+}
+
+/// Insert [`label::LOCAL_NVME`] iff `gb > 0`. Karpenter only stamps
+/// the label on instances WITH local NVMe — absent on ebs-only types
+/// — so omit at 0: `Gt "0"` excludes ebs-only via the absent path
+/// (`num_cmp(None, _) → None`), and `DoesNotExist` (the EBS hwClasses'
+/// d-variant exclusion) can match. Shared by [`karpenter_labels`]
+/// (prod) and every test fixture's label-map builder so the
+/// omit-at-0 rule has ONE edit site.
+pub(crate) fn maybe_nvme_label(m: &mut BTreeMap<&'static str, String>, gb: i64) {
+    if gb > 0 {
+        m.insert(label::LOCAL_NVME, gb.to_string());
+    }
+}
+
+/// Parse an EC2 instance-type name into Karpenter's
+/// `(category, generation, size)` discovery labels. Mirrors upstream
+/// Karpenter's `instancetype.computeRequirements`: `c8gd.metal-48xl` →
+/// (`c`, `8`, `metal-48xl`). The first letter run is the category; the
+/// first digit run after it is the generation; trailing family letters
+/// (`g`, `d`, `n`, `e`, `i`) are modifiers Karpenter folds into the
+/// family but does NOT label separately. Shared between
+/// [`karpenter_labels`] and `CatalogEntry::for_test` so the
+/// production and test-builder parsers cannot drift.
+fn parse_family(name: &str) -> (String, String, String) {
+    let (family, size) = name.split_once('.').unwrap_or((name, ""));
+    let category: String = family
+        .chars()
+        .take_while(|c| c.is_ascii_alphabetic())
+        .collect();
+    let generation: String = family
+        .chars()
+        .skip_while(|c| c.is_ascii_alphabetic())
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    (category, generation, size.to_owned())
 }
 
 /// One catalog entry: the `(name, cores, mem, labels)` projection the
@@ -106,6 +145,31 @@ pub struct CatalogEntry {
     pub cores: u32,
     pub mem_bytes: u64,
     pub labels: BTreeMap<&'static str, String>,
+}
+
+impl CatalogEntry {
+    /// Test-only canonical builder: parses `name` via [`parse_family`]
+    /// (the same parser [`karpenter_labels`] uses) and applies
+    /// [`maybe_nvme_label`]. `pub(crate)` so config.rs and
+    /// sla_contract.rs share ONE label-map builder — the omit-at-0
+    /// sweep had to patch three open-coded copies in parallel commits
+    /// before this existed.
+    #[cfg(test)]
+    pub(crate) fn for_test(name: &str, cores: u32, mem_gib: u64, arch: &str, nvme_gb: i64) -> Self {
+        let (category, generation, size) = parse_family(name);
+        let mut labels = BTreeMap::new();
+        labels.insert(label::CATEGORY, category);
+        labels.insert(label::GENERATION, generation);
+        labels.insert(label::SIZE, size);
+        labels.insert(label::ARCH, arch.to_owned());
+        maybe_nvme_label(&mut labels, nvme_gb);
+        Self {
+            name: name.into(),
+            cores,
+            mem_bytes: mem_gib << 30,
+            labels,
+        }
+    }
 }
 
 /// Project an [`InstanceTypeInfo`] onto the Karpenter label map the
@@ -132,30 +196,16 @@ pub fn from_instance_type_info(it: &InstanceTypeInfo) -> Option<CatalogEntry> {
     })
 }
 
-/// Derive Karpenter discovery labels for an instance type. Mirrors
-/// upstream Karpenter's `instancetype.computeRequirements`:
-/// `c8gd.metal-48xl` → category=`c`, generation=`8`, size=`metal-48xl`.
-/// The family digits (between the first letter and the `.`) are the
-/// generation; trailing letters (`g`, `d`, `n`, `e`, `i`) are family
-/// modifiers Karpenter folds into the family but does NOT label
-/// separately — `requirements` select on category+generation only.
+/// Derive Karpenter discovery labels for an instance type. Name
+/// parsing is [`parse_family`]; `requirements` select on
+/// category+generation only.
 // r[impl scheduler.sla.ceiling.catalog-derived+4]
 fn karpenter_labels(it: &InstanceTypeInfo, name: &str) -> BTreeMap<&'static str, String> {
     let mut m = BTreeMap::new();
-    let (family, size) = name.split_once('.').unwrap_or((name, ""));
-    // First letter run = category; first digit run after = generation.
-    let category: String = family
-        .chars()
-        .take_while(|c| c.is_ascii_alphabetic())
-        .collect();
-    let generation: String = family
-        .chars()
-        .skip_while(|c| c.is_ascii_alphabetic())
-        .take_while(|c| c.is_ascii_digit())
-        .collect();
+    let (category, generation, size) = parse_family(name);
     m.insert(label::CATEGORY, category);
     m.insert(label::GENERATION, generation);
-    m.insert(label::SIZE, size.to_owned());
+    m.insert(label::SIZE, size);
     if let Some(arch) = it
         .processor_info()
         .and_then(|p| p.supported_architectures().iter().find_map(k8s_arch))
@@ -167,13 +217,14 @@ fn karpenter_labels(it: &InstanceTypeInfo, name: &str) -> BTreeMap<&'static str,
         m.insert(label::CPU_MANUFACTURER, mfr.to_ascii_lowercase());
     }
     // `instance-local-nvme` is total ephemeral storage in GB (Karpenter
-    // uses string-encoded integer for `Gt`/`Lt`). Absent → `0` — a
-    // class with `local-nvme Gt 0` then excludes ebs-only types.
-    let nvme_gb = it
-        .instance_storage_info()
-        .and_then(|s| s.total_size_in_gb())
-        .unwrap_or(0);
-    m.insert(label::LOCAL_NVME, nvme_gb.to_string());
+    // uses string-encoded integer for `Gt`/`Lt`). Omit-at-0: see
+    // [`maybe_nvme_label`].
+    maybe_nvme_label(
+        &mut m,
+        it.instance_storage_info()
+            .and_then(|s| s.total_size_in_gb())
+            .unwrap_or(0),
+    );
     m
 }
 
@@ -184,6 +235,15 @@ fn k8s_arch(a: &ArchitectureType) -> Option<&'static str> {
         _ => None,
     }
 }
+
+/// The k8s `NodeSelectorOperator` vocabulary [`requirements_match`]
+/// evaluates and `config::validate_shape` accepts. Canonical list
+/// referenced in error messages (validate_shape's "unrecognized
+/// operator (valid: …)"); the two match-arms still encode per-operator
+/// semantics independently — adding an operator means touching all
+/// four sites (this const, requirements_match, validate_shape, and
+/// templates/scheduler.yaml's render-time arity guard).
+pub(crate) const VALID_OPERATORS: &[&str] = &["In", "NotIn", "Gt", "Lt", "Exists", "DoesNotExist"];
 
 /// Evaluate Karpenter `NodeSelectorRequirement` semantics against a
 /// derived label map. Operator semantics match
@@ -408,31 +468,13 @@ mod tests {
     use super::super::config::NodeLabelMatch;
     use super::*;
 
-    /// In-memory catalog entry for tests — no AWS client.
+    /// In-memory catalog entry for tests — no AWS client. Thin wrapper
+    /// over [`CatalogEntry::for_test`] adding `CPU_MANUFACTURER` (this
+    /// module's tests select on it; cross-module callers don't).
     fn ce(name: &str, cores: u32, mem_gib: u64, arch: &str, nvme_gb: i64) -> CatalogEntry {
-        let (family, size) = name.split_once('.').unwrap();
-        let category: String = family
-            .chars()
-            .take_while(|c| c.is_ascii_alphabetic())
-            .collect();
-        let generation: String = family
-            .chars()
-            .skip_while(|c| c.is_ascii_alphabetic())
-            .take_while(|c| c.is_ascii_digit())
-            .collect();
-        let mut labels = BTreeMap::new();
-        labels.insert(label::CATEGORY, category);
-        labels.insert(label::GENERATION, generation);
-        labels.insert(label::SIZE, size.to_owned());
-        labels.insert(label::ARCH, arch.to_owned());
-        labels.insert(label::LOCAL_NVME, nvme_gb.to_string());
-        labels.insert(label::CPU_MANUFACTURER, "amd".to_owned());
-        CatalogEntry {
-            name: name.into(),
-            cores,
-            mem_bytes: mem_gib << 30,
-            labels,
-        }
+        let mut e = CatalogEntry::for_test(name, cores, mem_gib, arch, nvme_gb);
+        e.labels.insert(label::CPU_MANUFACTURER, "amd".to_owned());
+        e
     }
 
     fn req(key: &str, op: &str, values: &[&str]) -> NodeSelectorReq {
@@ -738,7 +780,7 @@ mod tests {
         let classes = HashMap::from([(
             "nvme-arm".to_owned(),
             hw(
-                "rio-nvme",
+                rio_common::k8s::NVME_NODE_CLASS,
                 vec![
                     req(label::CATEGORY, "In", &["c", "m", "r"]),
                     req(label::ARCH, "In", &["arm64"]),
@@ -751,6 +793,53 @@ mod tests {
             out.get("nvme-arm"),
             Some(&(95, (192u64 << 30) / 10 * 9)),
             "Gt 0 excludes ebs-only c8a.48xlarge; 96c − 1 kubelet reserve, 10% mem reserve"
+        );
+    }
+
+    /// `karpenter_labels` mirrors upstream Karpenter: the
+    /// `instance-local-nvme` label is set only on instances with local
+    /// NVMe — absent (not `"0"`) on ebs-only types. Pre-fix the label
+    /// was unconditionally `"0"`, so the EBS hwClasses' `DoesNotExist`
+    /// d-variant exclusion matched NOTHING and every EBS class got a
+    /// `(0,0)` ceiling in production. Exercises the real
+    /// `InstanceTypeInfo` projection (not the in-memory `ce()` helper).
+    // r[verify scheduler.sla.ceiling.catalog-derived+4]
+    #[test]
+    fn karpenter_labels_omits_nvme_label_when_absent() {
+        use aws_sdk_ec2::types::InstanceStorageInfo;
+        // ebs-only: no instance_storage_info at all (the real API shape).
+        let ebs_only = InstanceTypeInfo::builder().build();
+        let ebs_labels = karpenter_labels(&ebs_only, "c8a.48xlarge");
+        assert!(
+            !ebs_labels.contains_key(label::LOCAL_NVME),
+            "ebs-only type must NOT carry the instance-local-nvme label \
+             (Karpenter omits it; DoesNotExist must match)"
+        );
+        // nvme: instance_storage_info.total_size_in_gb populated.
+        let nvme = InstanceTypeInfo::builder()
+            .instance_storage_info(
+                InstanceStorageInfo::builder()
+                    .total_size_in_gb(5700)
+                    .build(),
+            )
+            .build();
+        let nvme_labels = karpenter_labels(&nvme, "c8gd.metal-48xl");
+        assert_eq!(
+            nvme_labels.get(label::LOCAL_NVME).map(String::as_str),
+            Some("5700"),
+            "nvme type carries instance-local-nvme = total_size_in_gb"
+        );
+        // The production-breaking property: the EBS hwClasses'
+        // `DoesNotExist` d-variant exclusion matches ebs-only types and
+        // excludes nvme types — exactly the partition Karpenter applies.
+        let does_not_exist = [req(label::LOCAL_NVME, "DoesNotExist", &[])];
+        assert!(
+            requirements_match(&does_not_exist, &ebs_labels),
+            "DoesNotExist must MATCH the ebs-only label map"
+        );
+        assert!(
+            !requirements_match(&does_not_exist, &nvme_labels),
+            "DoesNotExist must NOT match the nvme label map"
         );
     }
 

@@ -762,6 +762,7 @@ fn print_results(results: &mut [ProbeResult], loop_ok: bool, assertion2_ok: bool
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rio_common::k8s::NVME_NODE_CLASS;
     use rio_scheduler::sla::config::NodeLabelMatch;
 
     fn req(key: &str, op: &str, values: &[&str]) -> NodeSelectorReq {
@@ -827,7 +828,7 @@ mod tests {
             ],
         );
         let mut def = def;
-        def.node_class = "rio-nvme".into();
+        def.node_class = NVME_NODE_CLASS.into();
         let cell = ("lo-ebs-x86".into(), CapacityType::Spot);
         let metal = vec!["metal".into(), "metal-24xl".into()];
         let nc = mk_probe_nodeclaim(&cell, &def, &metal);
@@ -901,7 +902,7 @@ mod tests {
         );
         assert_eq!(
             v.pointer("/spec/nodeClassRef/name").and_then(Value::as_str),
-            Some("rio-nvme")
+            Some(NVME_NODE_CLASS)
         );
 
         // Empty metal_sizes → no instance-size requirement.
@@ -971,7 +972,7 @@ mod tests {
         assert_eq!(register_timeout(&ebs), Duration::from_secs(300));
 
         let mut nvme = hw_class(&[], vec![req("kubernetes.io/os", "In", &["linux"])]);
-        nvme.node_class = "rio-nvme".into();
+        nvme.node_class = NVME_NODE_CLASS.into();
         assert_eq!(register_timeout(&nvme), Duration::from_secs(300));
 
         // Same partition predicate as mk_probe_nodeclaim's

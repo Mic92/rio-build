@@ -352,6 +352,11 @@ in
         # the extraction (bug_111).
         cp ${../rio-controller/src/observability.rs} $TMPDIR/chart/.observability-source.rs
         cp ${../nix/rust_strip.py} $TMPDIR/chart/.rust-strip.py
+        # 57-drift-skip-parity.sh asserts DRIFT_SKIP_NODEPOOLS ⇔ the
+        # values.yaml NodePools carrying `budgets:[{nodes:"0",
+        # reasons:[Drifted]}]` — stage the const's source file (the
+        # (vvvvv) staging discipline; the observability.rs precedent).
+        cp ${../xtask/src/k8s/eks/deploy.rs} $TMPDIR/chart/.deploy-source.rs
 
         # Strict-decode tier (merged_bug_004): wrap helm so every
         # fragment's successful `helm template` output strict-decodes
@@ -2445,7 +2450,7 @@ in
         # phrases (legitimately appear in code as historical context);
         # deny_cross adds case/separator variants needed for nix/infra
         # that would FP docs' "Squid FOD proxy is deleted" prose.
-        deny_shared='\bBuilderPool\b|\bFetcherPools?\b|rio-cli bps\b|`bps`|vm-lifecycle-bps|RIO_TLS__|\bTlsError\b|rio-common/src/tls\.rs|load_client_tls|init_client_tls|spec\.sizing|Sizing::|fuseCacheBudget|logBudget|migration-lock mechanism|trigger-gc|--grace-period-hours|mTLS client[- ]cert|mTLS cert mount|mTLS main port|VMs: mTLS|plaintext-health listener|TLS and plaintext ports|mTLS bypass|mTLS-identified|mTLS identifies|falls? back to mTLS|mTLS peer cert|\bplaintext port\b|CN-allowlist\)|\(gateway cert|dev-mode/dev-mode|TLS is env-only|\bTLS init\b|without relying on service tokens|replacement for the service-HMAC|RIO_JWT_SIGNING_KEY_PATH|rio\.jwt(Verify|Sign)Env|worker\.seccomp|`tls` / `metrics_addr`|\brio-worker\b|\bReadyQueue\b|\bpush_ready\b|\bqueue_priority\b|\bINTERACTIVE_BOOST\b|\bseed_ready_queue\b|\brearm_materialization_job\b|\btrim_chunk\b|\bDEFAULT_PEER_URL_TEMPLATE\b|\btick_publish_gauges\b|\bpull_attempt_seen_open\b|\bclosure_vouched\b|\bFencedWrite\b|\brollback_assignment\b|\bCOLLECT_CURSOR\b|\bCOLLECT_BACKLOG_ESTIMATE\b|rio_scheduler_workers_active|rio_scheduler_queue_depth|rio-scheduler/src/logs/|store-side 4096|[Tt]emplate brackets \\{pod\\}|Bracketed for v6-only|\bfold_tenant_reprobes\b|\bfresh_mint_allowance\b|\bSTEAL_SPECULATION_ALLOWANCE\b|\bfresh_mint_headroom\b|\bMaterializeTransport\b|\brio_scheduler_sla_class_ceiling_uncatalogued\b|\b00-estimator-refresh\b|\bFloorAxis\b|\baxis_for_reason_label\b|\bstarted_with_predecessor\b|\bbump_floor_or_count\b|\bCorroborationWitness\b|\bWitnessAxis\b|\bcorroborated_sizing\b|\bcorroborated_timeout\b|\bcorroborated_compute_bound\b|\bbump_floor_on_corroborated_claim\b|\bWitnessedDisposition\b|\bbump_resource_floor\b|\bSizingClaim\b|\bbump_dim\b|\bsizing_class_label\b|\bCoresOutcome\b|\bHashGate\b|\bhash_gate\b|\bwith_hash_gate\b|\btick_reevaluate_parked_materialization_jobs\b|\bparse_or_warn_default\b|\bhard_cores\b|\bhard_mem\b|\bhard_disk\b|ObservedPeaks::witnessed\b|\bAxisTrust\b|\bdebug_seed_running_peaks\b|\bsanitize_cpu_seconds\b|\bshiroa\b|\bshiroaPkg\b|\bmdbook\b|\breflexo\b|typst\.ts\b|docs-svg-dedup|RIO_TYPST_XDG|docs-serve-parity|is-web-target|\bx-url-base\b|shiroa-sys-target|\bpersist_merge_to_db\b|\bpersist_and_activate\b|\bvalidate_and_ingest\b|\bpersist_prepared_batch\b|\bprices_into_drain\b'
+        deny_shared='\bBuilderPool\b|\bFetcherPools?\b|rio-cli bps\b|`bps`|vm-lifecycle-bps|RIO_TLS__|\bTlsError\b|rio-common/src/tls\.rs|load_client_tls|init_client_tls|spec\.sizing|Sizing::|fuseCacheBudget|logBudget|migration-lock mechanism|trigger-gc|--grace-period-hours|mTLS client[- ]cert|mTLS cert mount|mTLS main port|VMs: mTLS|plaintext-health listener|TLS and plaintext ports|mTLS bypass|mTLS-identified|mTLS identifies|falls? back to mTLS|mTLS peer cert|\bplaintext port\b|CN-allowlist\)|\(gateway cert|dev-mode/dev-mode|TLS is env-only|\bTLS init\b|without relying on service tokens|replacement for the service-HMAC|RIO_JWT_SIGNING_KEY_PATH|rio\.jwt(Verify|Sign)Env|worker\.seccomp|`tls` / `metrics_addr`|\brio-worker\b|\bReadyQueue\b|\bpush_ready\b|\bqueue_priority\b|\bINTERACTIVE_BOOST\b|\bseed_ready_queue\b|\brearm_materialization_job\b|\btrim_chunk\b|\bDEFAULT_PEER_URL_TEMPLATE\b|\btick_publish_gauges\b|\bpull_attempt_seen_open\b|\bclosure_vouched\b|\bFencedWrite\b|\brollback_assignment\b|\bCOLLECT_CURSOR\b|\bCOLLECT_BACKLOG_ESTIMATE\b|rio_scheduler_workers_active|rio_scheduler_queue_depth|rio-scheduler/src/logs/|store-side 4096|[Tt]emplate brackets \\{pod\\}|Bracketed for v6-only|\bfold_tenant_reprobes\b|\bfresh_mint_allowance\b|\bSTEAL_SPECULATION_ALLOWANCE\b|\bfresh_mint_headroom\b|\bMaterializeTransport\b|\brio_scheduler_sla_class_ceiling_uncatalogued\b|\b00-estimator-refresh\b|\bFloorAxis\b|\baxis_for_reason_label\b|\bstarted_with_predecessor\b|\bbump_floor_or_count\b|\bCorroborationWitness\b|\bWitnessAxis\b|\bcorroborated_sizing\b|\bcorroborated_timeout\b|\bcorroborated_compute_bound\b|\bbump_floor_on_corroborated_claim\b|\bWitnessedDisposition\b|\bbump_resource_floor\b|\bSizingClaim\b|\bbump_dim\b|\bsizing_class_label\b|\bCoresOutcome\b|\bHashGate\b|\bhash_gate\b|\bwith_hash_gate\b|\btick_reevaluate_parked_materialization_jobs\b|\bparse_or_warn_default\b|\bhard_cores\b|\bhard_mem\b|\bhard_disk\b|ObservedPeaks::witnessed\b|\bAxisTrust\b|\bdebug_seed_running_peaks\b|\bsanitize_cpu_seconds\b|\bshiroa\b|\bshiroaPkg\b|\bmdbook\b|\breflexo\b|typst\.ts\b|docs-svg-dedup|RIO_TYPST_XDG|docs-serve-parity|is-web-target|\bx-url-base\b|shiroa-sys-target|\bpersist_merge_to_db\b|\bpersist_and_activate\b|\bvalidate_and_ingest\b|\bpersist_prepared_batch\b|\bprices_into_drain\b|\bdataVolumeSize\b|\bdataVolumeIops\b|\bdataVolumeThroughputMiBps\b'
         deny_docs="$deny_shared|\bmTLS\b|fod-proxy|bundled into the scheduler|kubectl exec deploy/rio-scheduler -- rio-cli"
         # ADR-022: erofs+fscache → castore-FUSE-over-io_uring. The
         # `_ONDEMAND` Kconfig symbols + the `rio-ondemand` kernelPatches
@@ -2507,7 +2512,26 @@ in
         #   $ rg -nF 'the witnessed lane carries no' rio-scheduler/src/actor/floor.rs
         #   347:    /// specific witnessed letter, the witnessed lane carries no
         # → 1 hit (deleted at c4).
-        deny_concept='\bBuildExecution\b|\bCancelSignal\b|\bHeartbeatRequests?\b|\bHeartbeatResponses?\b|Heartbeat.{0,2}(RPC|unary)|\b[Rr]eady[- ]queues?\b|\bready_queue\b|\bDrainExecutor\b|terminationGracePeriodSeconds: 7200|blocks until its single in-flight build|Baked-in beats runtime envsubst|Forward-compat.*lands in P[0-9]|lands in P[0-9].*No Data|prox(y|ies|ying).{0,60}(Cilium|Envoy) Gateway|\(no series\).*never fires|[Uu]ndefined means .{0,4}.whole.{0,3}build|whole.?build view \(drvPath undefined\)|no derivation filter on the log stream|absorbed by .{0,80}(CreateFleet|Karpenter) batching|the witnessed lane carries no'
+        # gp3-80k: "gp3 max is 16[kK0 ]" (zero remaining occurrences;
+        # zero-tolerance — char-class catches "16k", "16K", "16000",
+        # "16 000") and `L-B3A130E6` (kept for archaeology under
+        # concept_escape "retired") are stale facts — gp3 caps at 80k
+        # IOPS / 2000 MiB/s since 2025-09, and the io2 migration plan
+        # that L-B3A130E6 gated is retired. Verified narrowing record
+        # (scope = concept_scan's $typSrc + $crossSrc, i.e. docs/ +
+        # every *.rs + nix/**/*.{sh,json} + infra/ + .github/ +
+        # rio-dashboard; --type-not=nix because this file self-excludes
+        # and the lone .nix carrier is the deny_concept regex itself):
+        #   $ rg -n 'L-B3A130E6' infra/ docs/ rio-*/ nix/ .github/ --type-not=nix
+        #   infra/helm/rio-build/templates/karpenter.yaml:97:  ...L-B3A130E6-gated io2 migration is retired:
+        #   infra/helm/rio-build/values.yaml:1584:  ...L-B3A130E6-gated io2 migration plan is retired
+        # → 2 hits, both escaped.
+        # The gp3 grep verifies the BROADER pattern (the relinquished
+        # variants the char-class still catches), not just the literal
+        # "16k" form:
+        #   $ rg -n 'gp3 max is 16' infra/ docs/ rio-*/ nix/ .github/ --type-not=nix
+        # → 0 hits.
+        deny_concept='\bBuildExecution\b|\bCancelSignal\b|\bHeartbeatRequests?\b|\bHeartbeatResponses?\b|Heartbeat.{0,2}(RPC|unary)|\b[Rr]eady[- ]queues?\b|\bready_queue\b|\bDrainExecutor\b|terminationGracePeriodSeconds: 7200|blocks until its single in-flight build|Baked-in beats runtime envsubst|Forward-compat.*lands in P[0-9]|lands in P[0-9].*No Data|prox(y|ies|ying).{0,60}(Cilium|Envoy) Gateway|\(no series\).*never fires|[Uu]ndefined means .{0,4}.whole.{0,3}build|whole.?build view \(drvPath undefined\)|no derivation filter on the log stream|absorbed by .{0,80}(CreateFleet|Karpenter) batching|the witnessed lane carries no|gp3 max is 16[kK0 ]|\bL-B3A130E6\b'
         # merged_bug_081: every escape token WORD-BOUND — the old
         # unanchored vocabulary legalized live narration via substrings
         # ("unremoved", "pre-pulling") and via unrelated matches in the

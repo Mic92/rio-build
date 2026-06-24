@@ -2759,6 +2759,9 @@ karpenter	NodePool/rio-store	metadata.labels.app.kubernetes.io/part-of
 karpenter	NodePool/rio-store	metadata.name
 karpenter	NodePool/rio-store	spec
 karpenter	NodePool/rio-store	spec.disruption
+karpenter	NodePool/rio-store	spec.disruption.budgets
+karpenter	NodePool/rio-store	spec.disruption.budgets[].nodes
+karpenter	NodePool/rio-store	spec.disruption.budgets[].reasons
 karpenter	NodePool/rio-store	spec.disruption.consolidateAfter
 karpenter	NodePool/rio-store	spec.disruption.consolidationPolicy
 karpenter	NodePool/rio-store	spec.limits

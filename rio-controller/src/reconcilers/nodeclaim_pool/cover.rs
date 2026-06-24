@@ -1192,7 +1192,7 @@ pub fn build_nodeclaim(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rio_common::k8s::METAL_NODE_CLASS;
+    use rio_common::k8s::{METAL_NODE_CLASS, NVME_NODE_CLASS};
     use rio_proto::types::{NodeSelectorRequirement, NodeSelectorTerm};
 
     use crate::reconcilers::GI;
@@ -2281,7 +2281,7 @@ mod tests {
             &cell,
             (8, 32 * GI, 100 * GI),
             25.0,
-            &hw_ctx("rio-nvme"),
+            &hw_ctx(NVME_NODE_CLASS),
             &CoverCfg {
                 metal_sizes: &metal,
                 generation: 0,
@@ -2317,7 +2317,7 @@ mod tests {
         // mb_002: per-hw-class nodeClass (was scalar "rio-default";
         // nvme classes need rio-nvme so instanceStorePolicy:RAID0
         // applies).
-        assert_eq!(spec.node_class_ref.name, "rio-nvme");
+        assert_eq!(spec.node_class_ref.name, NVME_NODE_CLASS);
         assert_eq!(spec.node_class_ref.group, "karpenter.k8s.aws");
         assert_eq!(spec.node_class_ref.kind, "EC2NodeClass");
         // mb_002: builder taint stamped (band-loop NodePool template

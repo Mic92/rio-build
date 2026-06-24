@@ -225,7 +225,7 @@
             "default": 21600
           },
           "max_node_disk": {
-            "description": "Per-NodeClaim `resources.requests.ephemeral-storage` ceiling.\nHelm: derived from `karpenter.dataVolumeSize` × allocatable\nfraction (kubelet reserve ≈10%). nvme cells get instance-store\n(much larger) so this only binds ebs cells.",
+            "description": "Per-NodeClaim `resources.requests.ephemeral-storage` ceiling.\nHelm: derived from `karpenter.quotaVolumeSize` × allocatable\nfraction (kubelet reserve ≈10%). nvme cells get instance-store\n(much larger) so this only binds ebs cells.",
             "type": "integer",
             "format": "uint64",
             "minimum": 0,

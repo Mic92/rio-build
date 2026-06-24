@@ -5303,28 +5303,7 @@ async fn phantom_ceiling_rung_advances_not_starves() {
     // CONTAINING the phantom, with the committed exclusion active —
     // every class lands at the launchable 191, never 383.
     let cat_entry = |name: &str, cores: u32, mem_gib: u64| {
-        let (family, size) = name.split_once('.').unwrap();
-        let category: String = family
-            .chars()
-            .take_while(|c| c.is_ascii_alphabetic())
-            .collect();
-        let generation: String = family
-            .chars()
-            .skip_while(|c| c.is_ascii_alphabetic())
-            .take_while(|c| c.is_ascii_digit())
-            .collect();
-        let mut labels = std::collections::BTreeMap::new();
-        labels.insert("karpenter.k8s.aws/instance-category", category);
-        labels.insert("karpenter.k8s.aws/instance-generation", generation);
-        labels.insert("karpenter.k8s.aws/instance-size", size.to_owned());
-        labels.insert("kubernetes.io/arch", "amd64".to_owned());
-        labels.insert("karpenter.k8s.aws/instance-local-nvme", "0".to_owned());
-        crate::sla::catalog::CatalogEntry {
-            name: name.into(),
-            cores,
-            mem_bytes: mem_gib << 30,
-            labels,
-        }
+        crate::sla::catalog::CatalogEntry::for_test(name, cores, mem_gib, "amd64", 0)
     };
     let catalog_rows = vec![
         cat_entry("r8i.96xlarge", 384, 3072),

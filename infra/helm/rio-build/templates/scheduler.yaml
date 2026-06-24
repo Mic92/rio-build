@@ -71,8 +71,73 @@ labels = [
   {{- end }}
 ]
 requirements = [
+  {{- /* (operator, arity) shapes — mirrors `catalog::VALID_OPERATORS`
+         and `config::validate_shape`:
+           In/NotIn         → values: list, len ≥ 1
+           Gt/Lt            → values: list, len = 1, integer string
+           Exists/DoesNotExist → values: omitted or empty list
+         Guard order: kindIs FIRST (sprig `and` returns the first
+         falsy arg, so `and .values (kindIs …)` would skip the type
+         check on falsy scalars 0/""/false), then per-element string
+         type (`toString` would mask a numeric for the arity check
+         but `toJson` preserves it → TOML integer array → opaque
+         serde "expected string" at boot), then per-operator arity.
+         The Gt/Lt regex is permissive (no length cap) — i64-range
+         is `validate_shape`'s `parse::<i64>()`; helm has no native
+         bigint compare. */}}
   {{- range $def.requirements }}
-  { key = {{ .key | quote }}, operator = {{ .operator | quote }}, values = {{ toJson .values }} },
+  {{- $k := .key }}
+  {{- if eq $k "karpenter.k8s.aws/instance-local-nvme" }}
+  {{- fail (printf "scheduler.sla.hwClasses.%s.requirements: key %q is template-owned (injected below from `nodeClass`); remove it from per-class `requirements`" $h $k) }}
+  {{- end }}
+  {{- if not (or (kindIs "invalid" .values) (kindIs "slice" .values)) }}
+  {{- fail (printf "scheduler.sla.hwClasses.%s.requirements: `values` for key %q must be a list, got %s (forgot `[...]`? --set syntax needs `{a,b}`)" $h $k (kindOf .values)) }}
+  {{- end }}
+  {{- $vals := default (list) .values }}
+  {{- range $i, $e := $vals }}
+  {{- if not (kindIs "string" $e) }}
+  {{- fail (printf "scheduler.sla.hwClasses.%s.requirements: `values[%d]` for key %q must be a string, got %s %v (quote YAML numbers/bools; --set-json needs `[\"7\"]` not `[7]`)" $h $i $k (kindOf $e) $e) }}
+  {{- end }}
+  {{- end }}
+  {{- $n := len $vals }}
+  {{- if has .operator (list "In" "NotIn") }}
+  {{- if eq $n 0 }}
+  {{- fail (printf "scheduler.sla.hwClasses.%s.requirements: operator %q needs non-empty `values` (typo for singular `value`? omitted list?)" $h .operator) }}
+  {{- end }}
+  {{- else if has .operator (list "Gt" "Lt") }}
+  {{- if or (ne $n 1) (not (regexMatch "^-?[0-9]+$" (first $vals | toString))) }}
+  {{- fail (printf "scheduler.sla.hwClasses.%s.requirements: operator %q needs exactly one integer value, got %v" $h .operator $vals) }}
+  {{- end }}
+  {{- else if has .operator (list "Exists" "DoesNotExist") }}
+  {{- if ne $n 0 }}
+  {{- fail (printf "scheduler.sla.hwClasses.%s.requirements: operator %q must have empty/omitted `values`, got %v" $h .operator $vals) }}
+  {{- end }}
+  {{- else }}
+  {{- fail (printf "scheduler.sla.hwClasses.%s.requirements: unrecognized operator %q (valid: In NotIn Gt Lt Exists DoesNotExist)" $h .operator) }}
+  {{- end }}
+  { key = {{ $k | quote }}, operator = {{ .operator | quote }}, values = {{ toJson $vals }} },
+  {{- end }}
+  {{- /* The instance-local-nvme partition is structural, not per-class
+         authored — injected here as a single-source bijection so a new
+         hwClass on EITHER side cannot forget its half:
+         · nodeClass == rio-nvme → `Gt "0"` (rio-nvme's
+           instanceStorePolicy:RAID0 needs at least one instance-store
+           device; an ebs-only type matched here would leave the AMI's
+           rio-kubelet-mount NVMe branch with zero devices to stripe)
+         · nodeClass ≠ rio-nvme → `DoesNotExist` (rio-default/rio-metal
+           attach xvdb+xvdc which never mount when rio-kubelet-mount
+           takes its NVMe branch — d-variants must not land here)
+         Trade-off: under EBS-only-family ICE, d-variants no longer
+         fall through to rio-default — the capacity-ladder rungs
+         (hi-nvme→hi-ebs etc.) are the structural fallback, not
+         per-NodeClass instance-pool overlap.
+         The "rio-nvme" discriminant mirrors `rio_common::k8s::
+         NVME_NODE_CLASS`; helm test 56 + the Rust shipped::
+         projection catch divergence. */}}
+  {{- if eq $def.nodeClass "rio-nvme" }}
+  { key = "karpenter.k8s.aws/instance-local-nvme", operator = "Gt", values = ["0"] },
+  {{- else }}
+  { key = "karpenter.k8s.aws/instance-local-nvme", operator = "DoesNotExist", values = [] },
   {{- end }}
   {{- /* live_050(d) fleet plane: the committed launch-evidence exclusion
          projected per-class from the ONE karpenter.unlaunchableSizes

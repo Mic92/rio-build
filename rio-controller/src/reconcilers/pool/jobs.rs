@@ -183,7 +183,7 @@ pub(crate) fn intent_headroom(i: &SpawnIntent) -> f64 {
 /// - [`crate::reconcilers::nodeclaim_pool`]'s `cover_deficit` — the
 ///   NodeClaim `resources.requests.ephemeral-storage` floor (B8 live:
 ///   a 100Gi-intent pod asked 201Gi on a 189Gi-allocatable node);
-/// - helm-lint `14-disk-ceiling.sh` — `karpenter.dataVolumeSize` ≥
+/// - helm-lint `14-disk-ceiling.sh` — `karpenter.quotaVolumeSize` ≥
 ///   `pod_ephemeral_request(sla.maxDisk, worst-case headroom)` +
 ///   kubelet reserve.
 ///

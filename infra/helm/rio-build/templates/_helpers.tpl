@@ -271,7 +271,7 @@ $ctx is the map to hasKey against; $key the field name; $val the value.
 */}}
 {{/*
 k8s Quantity string ("500Gi" / "2Ti") → bytes. Minimal: only the
-integer Ki/Mi/Gi/Ti suffixes the chart uses (`karpenter.dataVolumeSize`).
+integer Ki/Mi/Gi/Ti suffixes the chart uses (`karpenter.quotaVolumeSize`).
 Fractional ("1.5Ti") and unrecognized ("500G", decimal SI) Quantities
 `fail` at `helm template` time — sprig `int64` would silently coerce
 them to 0, which zeroes `max_node_disk` in `controller.toml` and makes
@@ -281,7 +281,7 @@ provisioning halt with no alert). Bare integers are bytes.
 {{- define "rio.quantityBytes" -}}
 {{- $q := toString . -}}
 {{- if not (regexMatch "^[0-9]+(Ki|Mi|Gi|Ti)?$" $q) -}}
-{{- fail (printf "rio.quantityBytes: %q is not an integer Quantity with a Ki/Mi/Gi/Ti suffix or no suffix; fix karpenter.dataVolumeSize in values.yaml" .) -}}
+{{- fail (printf "rio.quantityBytes: %q is not an integer Quantity with a Ki/Mi/Gi/Ti suffix or no suffix; fix the values.yaml key feeding this (e.g. karpenter.quotaVolumeSize)" .) -}}
 {{- else if hasSuffix "Ti" $q -}}
 {{- mul (trimSuffix "Ti" $q | int64) 1099511627776 -}}
 {{- else if hasSuffix "Gi" $q -}}

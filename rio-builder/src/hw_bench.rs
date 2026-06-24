@@ -62,8 +62,22 @@ const REF_ALU_SECS: f64 = 5.0;
 /// STREAM triad GB/s on the reference hw_class (single-thread).
 const REF_MEMBW_GBPS: f64 = 12.0;
 
-/// `O_DIRECT|O_DSYNC` 1 MiB seq-write MB/s on the reference hw_class
-/// (gp3 root volume at default 125 MB/s provisioned throughput).
+/// `O_DIRECT|O_DSYNC` 1 MiB seq-write MB/s anchor — gp3's BASELINE
+/// (free-tier) throughput. Every Nitro instance size achieves
+/// ≥125 MiB/s regardless of per-volume provisioning, so
+/// `factor[ioseq] ≥ 1.0` for every size within a class — the per-class
+/// median in `hw_perf_factors` stays representative (no intra-class
+/// spread from instance-size EBS-bandwidth caps; the 2000 MiB/s
+/// provisioned ceiling is only reachable on ≥~12-16xlarge).
+///
+/// The reference-class probe device is the gp3 quota volume (xvdb;
+/// was root xvda pre-live_060-a), but the ANCHOR value is NOT a
+/// measurement of that device's actual throughput — it is a ratio
+/// denominator. Keeping it fixed at 125 preserves continuity with
+/// every existing `hw_perf_samples.factor->>'ioseq'` row (re-anchoring
+/// would mix old/new samples in the 7-day median window and shift
+/// the OpenBenchmarking cold-start rows). Cross-class RATIOS are what
+/// affect routing; the absolute value only sets the scale.
 const REF_IOSEQ_MBPS: f64 = 125.0;
 
 /// Build a single-cycle random permutation over `0..RING_LEN`. Sattolo
@@ -229,7 +243,8 @@ unsafe impl Send for AlignedBlock {}
 /// `O_DSYNC` forces each 1 MiB write to the device before returning so
 /// the timer covers the device, not the request queue. `dir` is
 /// `cfg.overlay_base_dir` — the overlays emptyDir, which is the same
-/// volume builds write to (gp3 root or NVMe RAID0 per nodeClassRef).
+/// volume builds write to (gp3 quota volume or NVMe RAID0 per
+/// nodeClassRef).
 ///
 /// Runs in `spawn_blocking`: the write loop is sync I/O by design.
 /// Target file is removed on return (best-effort).
@@ -483,7 +498,8 @@ mod tests {
     /// speed, ~60 GB/s observed), and tmpfs rejects it outright with
     /// `EINVAL`. Both are fine for a unit test of the code path; the
     /// production probe targets `/var/rio/overlays` which is always
-    /// ext4-on-EBS or ext4-on-NVMe.
+    /// XFS-on-EBS (the gp3 quota volume) or XFS-on-NVMe (the RAID0
+    /// stripe), both of which honor `O_DIRECT`.
     #[tokio::test]
     async fn ioseq_returns_positive_mbps() {
         let dir = tempfile::tempdir().unwrap();

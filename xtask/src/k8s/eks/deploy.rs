@@ -606,11 +606,21 @@ fn print_migrate_diagnostics() {
     }
 }
 
-/// NodePools whose NodeClaims `--wait-drift` ignores. `rio-general`
-/// has `disruption.budgets: [{nodes:"0", reasons:[Drifted]}]` so its
-/// claims stay `Drifted=True` by design until `xtask k8s
-/// rotate-general` — waiting on them would block forever.
-pub(crate) const DRIFT_SKIP_NODEPOOLS: &[&str] = &["rio-general"];
+/// NodePools whose NodeClaims `--wait-drift` ignores. Both pools have
+/// `disruption.budgets: [{nodes:"0", reasons:[Drifted]}]` so their
+/// claims stay `Drifted=True` by design until manual rotation —
+/// waiting on them would block forever.
+///
+/// - `rio-general`: control-plane pods are connection-stateful;
+///   rotated via `xtask k8s rotate-general`.
+/// - `rio-store`: store pods carry `karpenter.sh/do-not-disrupt` +
+///   one-per-node required anti-affinity + `WhenEmpty`, so Karpenter
+///   has no Drifted convergence path (a node only empties when its
+///   store pod is deleted). Rotated via `xtask k8s rotate-store`.
+///
+/// helm test 57 asserts this list ⇔ values.yaml NodePools carrying
+/// the Drifted=0 budget — adding a held-back pool means touching both.
+pub(crate) const DRIFT_SKIP_NODEPOOLS: &[&str] = &["rio-general", "rio-store"];
 
 /// Poll until no Karpenter NodeClaim has `Drifted=True`. An AMI change
 /// drifts every Karpenter node; the disruption controller replaces them
@@ -619,8 +629,9 @@ pub(crate) const DRIFT_SKIP_NODEPOOLS: &[&str] = &["rio-general"];
 /// replacements at the default `budgets:10%` × ~2-3min each.
 ///
 /// `skip_pools`: NodePools to exclude from the wait — see
-/// [`DRIFT_SKIP_NODEPOOLS`]. Pass `&[]` to wait on all pools (used by
-/// `rotate-general` after deleting the held-back claims).
+/// [`DRIFT_SKIP_NODEPOOLS`]. The `rotate-*` commands pass
+/// `DRIFT_SKIP_NODEPOOLS` minus the pool they just deleted, so the
+/// wait covers the rotated pool but not its held-back sibling.
 pub(crate) async fn wait_drift_settled(client: &kube::Client, skip_pools: &[&str]) -> Result<()> {
     let skip: Vec<String> = skip_pools.iter().map(|s| s.to_string()).collect();
     let api = status::nodeclaim_api(client);
@@ -691,7 +702,8 @@ pub(crate) async fn wait_drift_settled(client: &kube::Client, skip_pools: &[&str
 /// Delete `rio-general` NodeClaims whose `status.imageID` doesn't match
 /// the EC2NodeClass-resolved AMI set, so Karpenter re-provisions them
 /// on the current AMI; then wait for drift to settle (including
-/// rio-general). See [`DRIFT_SKIP_NODEPOOLS`] for why this is manual.
+/// rio-general, still skipping rio-store). See [`DRIFT_SKIP_NODEPOOLS`]
+/// for why this is manual.
 ///
 /// Idempotent: skips claims already terminating (`deletionTimestamp`
 /// set), still launching (`status.imageID` not yet populated —
@@ -702,20 +714,45 @@ pub(crate) async fn wait_drift_settled(client: &kube::Client, skip_pools: &[&str
 /// bounded by node-launch (~2-3min) — it no longer races the gateway's
 /// 1h `sessionDrainSecs`.
 pub async fn rotate_general() -> Result<()> {
+    rotate_held_pool(
+        "rio-general",
+        "gateway sessions on draining nodes have up to sessionDrainSecs (1h) to finish",
+    )
+    .await
+}
+
+/// `rio-store` sibling of [`rotate_general`]. Store pods carry
+/// `karpenter.sh/do-not-disrupt` + one-per-node anti-affinity, so the
+/// deleted NodeClaim's drain blocks on the StatefulSet rolling the
+/// pod onto the replacement node. Run during a quiet window.
+pub async fn rotate_store() -> Result<()> {
+    rotate_held_pool(
+        "rio-store",
+        "store pods carry do-not-disrupt — drain waits for the StatefulSet to roll each replica",
+    )
+    .await
+}
+
+/// Shared body of [`rotate_general`] / [`rotate_store`]: delete
+/// off-AMI NodeClaims for one [`DRIFT_SKIP_NODEPOOLS`] pool, then
+/// [`wait_drift_settled`] over all pools EXCEPT the other held-back
+/// ones (the rotated pool itself is no longer skipped — we just
+/// deleted its stale claims, so it converges).
+async fn rotate_held_pool(pool: &str, drain_note: &str) -> Result<()> {
     let client = kube::client().await?;
     let api = status::nodeclaim_api(&client);
     let target_amis = ec2nodeclass_resolved_amis(&client, "rio-default").await;
     if target_amis.is_empty() {
         warn!(
             "EC2NodeClass rio-default has no resolved AMIs (status.amis empty or \
-             unreadable); AMI gate disabled — every launched rio-general claim will be deleted"
+             unreadable); AMI gate disabled — every launched {pool} claim will be deleted"
         );
     }
 
-    let lp = ::kube::api::ListParams::default().labels("karpenter.sh/nodepool=rio-general");
+    let lp = ::kube::api::ListParams::default().labels(&format!("karpenter.sh/nodepool={pool}"));
     let claims = api.list(&lp).await?;
     if claims.items.is_empty() {
-        info!("no rio-general NodeClaims found; nothing to rotate");
+        info!("no {pool} NodeClaims found; nothing to rotate");
         return Ok(());
     }
     let mut deleted = 0usize;
@@ -744,16 +781,18 @@ pub async fn rotate_general() -> Result<()> {
     }
     if deleted == 0 {
         info!(
-            "nothing to rotate — all {} rio-general claims terminating, launching, or on target AMI",
+            "nothing to rotate — all {} {pool} claims terminating, launching, or on target AMI",
             claims.items.len()
         );
         return Ok(());
     }
-    info!(
-        "rio-general nodes rotating ({deleted} claims); gateway sessions on \
-         draining nodes have up to sessionDrainSecs (1h) to finish"
-    );
-    wait_drift_settled(&client, &[]).await
+    info!("{pool} nodes rotating ({deleted} claims); {drain_note}");
+    let skip: Vec<&str> = DRIFT_SKIP_NODEPOOLS
+        .iter()
+        .copied()
+        .filter(|p| *p != pool)
+        .collect();
+    wait_drift_settled(&client, &skip).await
 }
 
 /// Karpenter publishes the AMI(s) it resolved from `amiSelectorTerms` at
