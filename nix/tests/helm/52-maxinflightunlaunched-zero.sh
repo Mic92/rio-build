@@ -70,3 +70,56 @@ grep -q "maxLeadTime must be set" "$err" || {
   sed 's/^/  /' "$err" >&2
   exit 1
 }
+
+# rio.requiredFloatTOML: %v full-precision then .0-suffix-if-integer.
+# A sub-‰ override must reach Config::validate verbatim (loud reject),
+# NOT be rounded to 0.000 by the chart (silent disable). A whole-number
+# override must render as a TOML float literal (0.0, not 0 — toml-rs
+# rejects an integer literal for an f64 field).
+got=$(render_controller_toml --set karpenter.nodeclaimPool.backlogFloorCapRatio=0.0004 \
+  | { grep -E '^backlog_floor_cap_ratio = ' || true; })
+test "$got" = "backlog_floor_cap_ratio = 0.0004" || {
+  echo "FAIL: backlogFloorCapRatio=0.0004 rendered '$got', want 0.0004 (full precision — helm/direct-TOML channel agreement)" >&2
+  exit 1
+}
+got=$(render_controller_toml --set karpenter.nodeclaimPool.backlogFloorCapRatio=1 \
+  | { grep -E '^backlog_floor_cap_ratio = ' || true; })
+test "$got" = "backlog_floor_cap_ratio = 1.0" || {
+  echo "FAIL: backlogFloorCapRatio=1 rendered '$got', want 1.0 (TOML float literal, not integer)" >&2
+  exit 1
+}
+if render_karpenter --set karpenter.nodeclaimPool.backlogFloorCapRatio=null >/dev/null 2>"$err"; then
+  echo "FAIL: backlogFloorCapRatio=null rendered — rio.requiredFloatTOML fail-open" >&2
+  exit 1
+fi
+grep -q "backlogFloorCapRatio must be set" "$err" || {
+  echo "FAIL: backlogFloorCapRatio=null refused but without naming the key:" >&2
+  sed 's/^/  /' "$err" >&2
+  exit 1
+}
+
+# rio.requiredFloat non-finite guard (planted-red): NaN/Inf accepted by
+# Sprig float64 → would render `NaN`/`+Inf` (invalid TOML / PromQL).
+# One %.1f TOML-sink callsite proves the guard fires from
+# requiredFloat itself, not only the TOML wrapper.
+if render_karpenter --set scheduler.sla.maxLeadTime=NaN >/dev/null 2>"$err"; then
+  echo "FAIL: maxLeadTime=NaN rendered — rio.requiredFloat non-finite guard fail-open" >&2
+  exit 1
+fi
+grep -q "maxLeadTime must be a finite float" "$err" || {
+  echo "FAIL: maxLeadTime=NaN refused but without the finite-guard message:" >&2
+  sed 's/^/  /' "$err" >&2
+  exit 1
+}
+# controller.yaml minConsolidationTime[k] < 0 guard (planted-red, sibling
+# maxConsolidationTime guard is symmetric). 0.0 is ACCEPTED (no-op vs
+# boot_median/2 floor); only negative is rejected.
+if render_karpenter --set 'karpenter.nodeclaimPool.minConsolidationTime.gpu=-1' >/dev/null 2>"$err"; then
+  echo "FAIL: minConsolidationTime[gpu]=-1 rendered — <0 guard fail-open" >&2
+  exit 1
+fi
+grep -q 'minConsolidationTime\["gpu"\] must be ≥ 0' "$err" || {
+  echo "FAIL: minConsolidationTime[gpu]=-1 refused but without the ≥0 message:" >&2
+  sed 's/^/  /' "$err" >&2
+  exit 1
+}

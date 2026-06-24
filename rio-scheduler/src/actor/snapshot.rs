@@ -553,6 +553,16 @@ impl DagActor {
         // consumer sums typed classes instead of trusting a prose
         // superset claim across the crate boundary.
         let mut forecast_by_system: HashMap<String, u64> = HashMap::new();
+        // Backlog warm-floor signal (ctrl.nodeclaim.backlog-floor): the
+        // FULL DAG-depth `status==Queued` count, per system. NOT the
+        // §13b 1-layer forecast frontier (which misses chained-trivial-
+        // wrapper shapes) and NOT the Ready-class `queued_by_system`.
+        // Counted OUTSIDE the `max_lead > 0.0` gate and BEFORE the
+        // kind/feature/classify filters — full-population, pre-filter,
+        // no dep walk. Intentionally over-counts substitution-pending
+        // nodes that may never build; the consumer's
+        // `min(pending, live_registered)` cap absorbs that.
+        let mut pending_by_system: HashMap<String, u64> = HashMap::new();
         let probe_gate = self.store_client.is_some();
         // ONE snapshot of the shared solve inputs for the whole poll —
         // every drv sees the SAME `(hw, cost, inputs_gen)`. Per-drv
@@ -639,8 +649,24 @@ impl DagActor {
 
         let spawn_now = std::time::Instant::now();
         for (drv_hash, state) in self.dag.iter_nodes() {
-            if state.status() != DerivationStatus::Ready {
-                continue;
+            match state.status() {
+                DerivationStatus::Ready => {}
+                DerivationStatus::Queued => {
+                    // r[impl ctrl.nodeclaim.backlog-floor]
+                    // Full-population, pre-filter, no dep walk: the
+                    // reaper's warm-floor signal. NOT the §13b forecast
+                    // frontier — see nodeclaim_pool/mod.rs:749-764 for
+                    // why the frontier is depth-blind. Intentionally NO
+                    // `has_pending_unclaimed_job` filter: the
+                    // controller-side `min(pending, live)` cap absorbs
+                    // substitution-pending over-count. `bump_count`
+                    // (NOT `.entry(clone)`) for every `state.system`
+                    // accumulator in this loop body — see the helper
+                    // doc for the Occupied-path-clone rationale.
+                    rio_common::bump_count(&mut pending_by_system, &state.system);
+                    continue;
+                }
+                _ => continue,
             }
             // r[impl sched.materialize.job+2]
             // PD-7 (Phase B, design §2.3) via THE shared classifier
@@ -668,7 +694,7 @@ impl DagActor {
             // classification as `ClusterSnapshot.queued_by_system`, so
             // the two aggregates are equal by construction whichever
             // RPC a consumer reads.
-            *queued_by_system.entry(state.system.clone()).or_default() += 1;
+            rio_common::bump_count(&mut queued_by_system, &state.system);
             // r[impl sched.sla.intent-from-solve]
             // ADR-023: per-derivation SpawnIntent. intent_id is the
             // drv_hash itself — the controller stamps it on the pod
@@ -1080,7 +1106,7 @@ impl DagActor {
                 // Ready class's pre-filter superset form is the
                 // `queued_by_system` increment above
                 // (equal-by-construction with ClusterSnapshot).
-                *forecast_by_system.entry(state.system.clone()).or_default() += 1;
+                rio_common::bump_count(&mut forecast_by_system, &state.system);
                 intents.push((
                     state.sched.priority,
                     to_proto(drv_hash, state, &intent, false, eta),
@@ -1109,6 +1135,7 @@ impl DagActor {
             intents: intents.into_iter().map(|(_, i)| i).collect(),
             queued_by_system,
             forecast_by_system,
+            pending_by_system,
             ice_masked_cells: self
                 .ice
                 .masked_cells()

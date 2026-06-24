@@ -308,11 +308,22 @@ legs (0 renders 0; nil refuses naming the key). Every bare
 scheduler / prometheusrule TOML blocks goes through one of these.
 
 Usage:
-  {{ include "rio.requiredInt"   (list "scheduler.sla.maxFleetCores" .maxFleetCores) }}
-  {{ include "rio.requiredFloat" (list "%.1f" "scheduler.sla.maxLeadTime" .maxLeadTime) }}
-requiredFloat takes a printf format so callers keep their TOML
-float-literal shape (`%.1f` for f64-typed serde fields, `%v` where
-the Go default repr is fine).
+  {{ include "rio.requiredInt"       (list "scheduler.sla.maxFleetCores" .maxFleetCores) }}
+  {{ include "rio.requiredFloat"     (list "%.1f" "scheduler.sla.maxLeadTime" .maxLeadTime) }}
+  {{ include "rio.requiredFloatTOML" (list "scheduler.sla.hwCostTolerance" .hwCostTolerance) }}
+requiredFloat takes a printf format so callers control output shape;
+use it where the sink is NOT a TOML f64 (prometheusrule.yaml PromQL
+exprs pipe `| int`) or where N-decimal truncation is the documented
+field precision (seconds-typed `%.1f`). For TOML f64-typed serde
+fields use rio.requiredFloatTOML: it renders `%v` (full precision —
+no silent rounding of sub-‰ overrides to 0.000) then suffixes `.0`
+when the result has no `.`/`e`/`E` (Go `%v` on float64 uses `%g`, so
+0.0 → `"0"` / 1.0 → `"1"`, a TOML INTEGER literal toml-rs rejects
+for an f64 field). The result is always a syntactic TOML float and
+always carries the operator's full-precision value, so the helm and
+direct-TOML channels agree on Config::validate feedback (a sub-‰
+override fails LOUDLY at boot via validate, not silently via helm
+rounding to 0.000).
 */}}
 {{- define "rio.requiredInt" -}}
 {{- $key := index . 0 -}}
@@ -324,7 +335,35 @@ the Go default repr is fine).
 {{- $fmt := index . 0 -}}
 {{- $key := index . 1 -}}
 {{- $val := index . 2 -}}
-{{- printf $fmt (float64 (required (printf "%s must be set (Sprig float64 nil→0)" $key) $val)) -}}
+{{- $r := printf $fmt (float64 (required (printf "%s must be set (Sprig float64 nil→0)" $key) $val)) -}}
+{{- /* Non-finite guard: Sprig `float64`→cast.ToFloat64→strconv.ParseFloat
+     accepts NaN/Inf (case-insensitive) via `--set`; Go `%v`/`%.Nf`
+     render them as `NaN`/`+Inf`/`-Inf`. Reject at template time so the
+     operator sees a targeted message instead of a toml-rs syntax error
+     (Go's casing is invalid TOML — `nan`/`inf` lowercase only) or a
+     malformed PromQL expr at controller/prom boot. Matched on the
+     printf rendering (not float arithmetic — text/template `eq`/`gt`
+     float64 NaN behaviour is version-dependent). Lives HERE (not only
+     in requiredFloatTOML) so all eight call sites — the five `%.1f`
+     TOML f64 sinks, the two `%v|int` PromQL sinks, and the TOML helper
+     — share one guard. */ -}}
+{{- if regexMatch "(?i)nan|inf" $r -}}
+{{- fail (printf "%s must be a finite float (got %s); NaN/Inf render to invalid TOML/PromQL and Config::validate cannot inspect a value that fails to parse" $key $r) -}}
+{{- end -}}
+{{- $r -}}
+{{- end -}}
+
+{{- define "rio.requiredFloatTOML" -}}
+{{- $key := index . 0 -}}
+{{- $val := index . 1 -}}
+{{- /* Compose via rio.requiredFloat with $fmt="%v" so the
+     required→float64 ordering, the `(Sprig float64 nil→0)` message,
+     and the non-finite guard are defined ONCE. The `%v` (= `%g`)
+     rendering carries no `[.eE]` for whole numbers, so suffix `.0`
+     to keep it a syntactic TOML float (toml-rs rejects an integer
+     literal for an f64 field). */ -}}
+{{- $r := include "rio.requiredFloat" (list "%v" $key $val) -}}
+{{- if regexMatch "[.eE]" $r -}}{{ $r }}{{- else -}}{{ $r }}.0{{- end -}}
 {{- end -}}
 
 {{- define "rio.optBool" -}}

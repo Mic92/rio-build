@@ -1835,6 +1835,73 @@ in
         touch $out
       '';
 
+  # `LiveNode::is_registered_live()` is the single "live registered
+  # capacity" predicate; direct `.terminating()` / `.registered` reads
+  # in nodeclaim_pool/ that mean the same thing went unforwarded 7×
+  # across one feature branch (review-found whack-a-mole — the wrapper
+  # doc's hand-maintained N-callers list went stale on every miss). A
+  # direct read is CI-red unless the line OR the immediately-preceding
+  # line carries `reglive-exempt: <why>` (the why records WHICH
+  # distinct semantic the site reads — FFD in-flight capacity,
+  # VanishClass combinatorics, one-way latches, inverse predicates).
+  # `self.` reads (the impl block), `.registered = ` assignments, and
+  # comment-only lines are not flagged.
+  is-registered-live-coherence =
+    pkgs.runCommand "rio-is-registered-live-coherence"
+      {
+        src = pkgs.lib.fileset.toSource {
+          root = ../.;
+          fileset = pkgs.lib.fileset.fileFilter (
+            f: f.hasExt "rs"
+          ) ../rio-controller/src/reconcilers/nodeclaim_pool;
+        };
+        nativeBuildInputs = [ pkgs.ripgrep ];
+      }
+      ''
+        set +o pipefail
+        d=$src/rio-controller/src/reconcilers/nodeclaim_pool
+        fail=0
+        for f in $d/*.rs; do
+          while IFS=: read -r ln rest; do
+            # Skip when the hit line OR the line above carries the token.
+            sed -n "$((ln>1?ln-1:1)),''${ln}p" "$f" \
+              | rg -q 'reglive-exempt:' && continue
+            echo "  ''${f#$src/}:$ln:$rest" >&2
+            fail=1
+          done < <(sed '/^\(pub(crate) \)\?mod tests {/,$d' "$f" \
+                     | rg -n '\.terminating\(\)|\.registered\b' \
+                     | rg -v '\.registered = ' \
+                     | rg -v '\bself\.(registered\b|terminating\(\))' \
+                     | rg -v '^[0-9]+:\s*//')
+        done
+        if [[ $fail -eq 1 ]]; then
+          echo "FAIL: direct LiveNode.terminating()/.registered read in" >&2
+          echo "nodeclaim_pool/ — route through is_registered_live() OR add" >&2
+          echo "a // reglive-exempt: <why> token on the line (or the line" >&2
+          echo "above). See ffd.rs is_registered_live() doc." >&2
+          exit 1
+        fi
+        # Self-test: a planted bare read MUST fire; an exempted one MUST NOT;
+        # a `self.<other>` token on the same line MUST NOT exempt the hit
+        # (the prior `\bself\.` whole-line exempt did exactly that).
+        mkdir planted
+        printf '    .filter(|n| !n.terminating())\n' > planted/a.rs
+        printf '    // reglive-exempt: x\n    .filter(|n| !n.terminating())\n' > planted/b.rs
+        printf '    if self.cfg.hold_open && n.registered {\n' > planted/c.rs
+        rg -nq '\.terminating\(\)' planted/a.rs || {
+          echo "SELF-TEST FAIL: pattern missed planted bare read" >&2; exit 1
+        }
+        sed -n '1,2p' planted/b.rs | rg -q 'reglive-exempt:' || {
+          echo "SELF-TEST FAIL: prev-line escape lookup missed token" >&2; exit 1
+        }
+        rg -n '\.terminating\(\)|\.registered\b' planted/c.rs \
+          | rg -v '\bself\.(registered\b|terminating\(\))' \
+          | rg -q 'n\.registered' || {
+          echo "SELF-TEST FAIL: self.<other> on same line wrongly exempted bare read" >&2; exit 1
+        }
+        touch $out
+      '';
+
   # Reason-label <-> HELP sync: every literal (or same-file
   # helper-resolved) `"reason" => ...` label on a counter must appear
   # in that metric's describe_counter! HELP — an operator triaging a
@@ -1920,6 +1987,32 @@ in
   # packages.crds is a directory with one `<crd-name>.yaml` per CRD,
   # produced by the same crdgen binary `cargo xtask regen crds` runs —
   # single serialization path, so the bytes match by construction.
+  # nix/tests/fixtures/kwok-prod-hw.nix is a CHECKED MIRROR of
+  # `.scheduler.sla.hwClasses | keys` from values.yaml. The KWOK VM
+  # scenarios per-subkey-null every prod hwClass so the merged config
+  # collapses to {vmtest}; if the chart grows a class the literal
+  # doesn't list, the merged config silently keeps it and
+  # solve_full's draw set widens past `vmtest` — the exact drift that
+  # let 8 g7/metal/fetcher classes leak before 9dd33a8c. Nix cannot
+  # parse YAML at eval time without IFD, so the literal stays and
+  # this comparator turns silent drift into a red (the
+  # dashboardNsDefaults precedent above).
+  kwok-prodHw-drift = mkDriftCheck {
+    name = "kwok-prodHw-drift";
+    nativeBuildInputs = [ pkgs.yq-go ];
+    generate = ''
+      yq -r '.scheduler.sla.hwClasses | keys[]' \
+        ${../infra/helm/rio-build/values.yaml} | LC_ALL=C sort > $TMPDIR/gen
+      # The .nix literal is already C-sorted (asserted by its header
+      # comment); re-sort defensively so a mis-ordered edit reds as
+      # CONTENT drift, not as a spurious order diff.
+      cat ${pkgs.writeText "kwok-prod-hw.txt" (pkgs.lib.concatLines (import ./tests/fixtures/kwok-prod-hw.nix))} | LC_ALL=C sort > $TMPDIR/committed
+    '';
+    committed = "$TMPDIR/committed";
+    what = "nix/tests/fixtures/kwok-prod-hw.nix drifted from values.yaml .scheduler.sla.hwClasses keys";
+    regenHint = "yq -r '.scheduler.sla.hwClasses | keys[]' infra/helm/rio-build/values.yaml | LC_ALL=C sort  # then update nix/tests/fixtures/kwok-prod-hw.nix";
+  };
+
   crds-drift = mkDriftCheck {
     name = "crds-drift";
     generate = ''
@@ -2450,7 +2543,7 @@ in
         # phrases (legitimately appear in code as historical context);
         # deny_cross adds case/separator variants needed for nix/infra
         # that would FP docs' "Squid FOD proxy is deleted" prose.
-        deny_shared='\bBuilderPool\b|\bFetcherPools?\b|rio-cli bps\b|`bps`|vm-lifecycle-bps|RIO_TLS__|\bTlsError\b|rio-common/src/tls\.rs|load_client_tls|init_client_tls|spec\.sizing|Sizing::|fuseCacheBudget|logBudget|migration-lock mechanism|trigger-gc|--grace-period-hours|mTLS client[- ]cert|mTLS cert mount|mTLS main port|VMs: mTLS|plaintext-health listener|TLS and plaintext ports|mTLS bypass|mTLS-identified|mTLS identifies|falls? back to mTLS|mTLS peer cert|\bplaintext port\b|CN-allowlist\)|\(gateway cert|dev-mode/dev-mode|TLS is env-only|\bTLS init\b|without relying on service tokens|replacement for the service-HMAC|RIO_JWT_SIGNING_KEY_PATH|rio\.jwt(Verify|Sign)Env|worker\.seccomp|`tls` / `metrics_addr`|\brio-worker\b|\bReadyQueue\b|\bpush_ready\b|\bqueue_priority\b|\bINTERACTIVE_BOOST\b|\bseed_ready_queue\b|\brearm_materialization_job\b|\btrim_chunk\b|\bDEFAULT_PEER_URL_TEMPLATE\b|\btick_publish_gauges\b|\bpull_attempt_seen_open\b|\bclosure_vouched\b|\bFencedWrite\b|\brollback_assignment\b|\bCOLLECT_CURSOR\b|\bCOLLECT_BACKLOG_ESTIMATE\b|rio_scheduler_workers_active|rio_scheduler_queue_depth|rio-scheduler/src/logs/|store-side 4096|[Tt]emplate brackets \\{pod\\}|Bracketed for v6-only|\bfold_tenant_reprobes\b|\bfresh_mint_allowance\b|\bSTEAL_SPECULATION_ALLOWANCE\b|\bfresh_mint_headroom\b|\bMaterializeTransport\b|\brio_scheduler_sla_class_ceiling_uncatalogued\b|\b00-estimator-refresh\b|\bFloorAxis\b|\baxis_for_reason_label\b|\bstarted_with_predecessor\b|\bbump_floor_or_count\b|\bCorroborationWitness\b|\bWitnessAxis\b|\bcorroborated_sizing\b|\bcorroborated_timeout\b|\bcorroborated_compute_bound\b|\bbump_floor_on_corroborated_claim\b|\bWitnessedDisposition\b|\bbump_resource_floor\b|\bSizingClaim\b|\bbump_dim\b|\bsizing_class_label\b|\bCoresOutcome\b|\bHashGate\b|\bhash_gate\b|\bwith_hash_gate\b|\btick_reevaluate_parked_materialization_jobs\b|\bparse_or_warn_default\b|\bhard_cores\b|\bhard_mem\b|\bhard_disk\b|ObservedPeaks::witnessed\b|\bAxisTrust\b|\bdebug_seed_running_peaks\b|\bsanitize_cpu_seconds\b|\bshiroa\b|\bshiroaPkg\b|\bmdbook\b|\breflexo\b|typst\.ts\b|docs-svg-dedup|RIO_TYPST_XDG|docs-serve-parity|is-web-target|\bx-url-base\b|shiroa-sys-target|\bpersist_merge_to_db\b|\bpersist_and_activate\b|\bvalidate_and_ingest\b|\bpersist_prepared_batch\b|\bprices_into_drain\b|\bdataVolumeSize\b|\bdataVolumeIops\b|\bdataVolumeThroughputMiBps\b'
+        deny_shared='\bBuilderPool\b|\bFetcherPools?\b|rio-cli bps\b|`bps`|vm-lifecycle-bps|RIO_TLS__|\bTlsError\b|rio-common/src/tls\.rs|load_client_tls|init_client_tls|spec\.sizing|Sizing::|fuseCacheBudget|logBudget|migration-lock mechanism|trigger-gc|--grace-period-hours|mTLS client[- ]cert|mTLS cert mount|mTLS main port|VMs: mTLS|plaintext-health listener|TLS and plaintext ports|mTLS bypass|mTLS-identified|mTLS identifies|falls? back to mTLS|mTLS peer cert|\bplaintext port\b|CN-allowlist\)|\(gateway cert|dev-mode/dev-mode|TLS is env-only|\bTLS init\b|without relying on service tokens|replacement for the service-HMAC|RIO_JWT_SIGNING_KEY_PATH|rio\.jwt(Verify|Sign)Env|worker\.seccomp|`tls` / `metrics_addr`|\brio-worker\b|\bReadyQueue\b|\bpush_ready\b|\bqueue_priority\b|\bINTERACTIVE_BOOST\b|\bseed_ready_queue\b|\brearm_materialization_job\b|\btrim_chunk\b|\bDEFAULT_PEER_URL_TEMPLATE\b|\btick_publish_gauges\b|\bpull_attempt_seen_open\b|\bclosure_vouched\b|\bFencedWrite\b|\brollback_assignment\b|\bCOLLECT_CURSOR\b|\bCOLLECT_BACKLOG_ESTIMATE\b|rio_scheduler_workers_active|rio_scheduler_queue_depth|rio-scheduler/src/logs/|store-side 4096|[Tt]emplate brackets \\{pod\\}|Bracketed for v6-only|\bfold_tenant_reprobes\b|\bfresh_mint_allowance\b|\bSTEAL_SPECULATION_ALLOWANCE\b|\bfresh_mint_headroom\b|\bMaterializeTransport\b|\brio_scheduler_sla_class_ceiling_uncatalogued\b|\b00-estimator-refresh\b|\bFloorAxis\b|\baxis_for_reason_label\b|\bstarted_with_predecessor\b|\bbump_floor_or_count\b|\bCorroborationWitness\b|\bWitnessAxis\b|\bcorroborated_sizing\b|\bcorroborated_timeout\b|\bcorroborated_compute_bound\b|\bbump_floor_on_corroborated_claim\b|\bWitnessedDisposition\b|\bbump_resource_floor\b|\bSizingClaim\b|\bbump_dim\b|\bsizing_class_label\b|\bCoresOutcome\b|\bHashGate\b|\bhash_gate\b|\bwith_hash_gate\b|\btick_reevaluate_parked_materialization_jobs\b|\bparse_or_warn_default\b|\bhard_cores\b|\bhard_mem\b|\bhard_disk\b|ObservedPeaks::witnessed\b|\bAxisTrust\b|\bdebug_seed_running_peaks\b|\bsanitize_cpu_seconds\b|\bshiroa\b|\bshiroaPkg\b|\bmdbook\b|\breflexo\b|typst\.ts\b|docs-svg-dedup|RIO_TYPST_XDG|docs-serve-parity|is-web-target|\bx-url-base\b|shiroa-sys-target|\bpersist_merge_to_db\b|\bpersist_and_activate\b|\bvalidate_and_ingest\b|\bpersist_prepared_batch\b|\bprices_into_drain\b|\bdataVolumeSize\b|\bdataVolumeIops\b|\bdataVolumeThroughputMiBps\b|\bseed_reaped_cells\b|\bfetcherQuotaVolumeSize\b|\bfetcherRioVolumeSize\b'
         deny_docs="$deny_shared|\bmTLS\b|fod-proxy|bundled into the scheduler|kubectl exec deploy/rio-scheduler -- rio-cli"
         # ADR-022: erofs+fscache → castore-FUSE-over-io_uring. The
         # `_ONDEMAND` Kconfig symbols + the `rio-ondemand` kernelPatches
@@ -2531,6 +2624,14 @@ in
         # "16k" form:
         #   $ rg -n 'gp3 max is 16' infra/ docs/ rio-*/ nix/ .github/ --type-not=nix
         # → 0 hits.
+        # NARROWING (2026-06): the phrase "Targeted fix is a backlog-aware
+        # floor" was retired from nodeclaim_pool/mod.rs and helm
+        # values.yaml when the floor landed. Not denied: it is
+        # forward-reference prose, not a concept or identifier; no risk
+        # of re-rooting in docs/comments.
+        # Verification:
+        #   $ rg -n 'Targeted fix is a backlog-aware floor' -g '!nix/misc-checks.nix'
+        #   → 0 hits.
         deny_concept='\bBuildExecution\b|\bCancelSignal\b|\bHeartbeatRequests?\b|\bHeartbeatResponses?\b|Heartbeat.{0,2}(RPC|unary)|\b[Rr]eady[- ]queues?\b|\bready_queue\b|\bDrainExecutor\b|terminationGracePeriodSeconds: 7200|blocks until its single in-flight build|Baked-in beats runtime envsubst|Forward-compat.*lands in P[0-9]|lands in P[0-9].*No Data|prox(y|ies|ying).{0,60}(Cilium|Envoy) Gateway|\(no series\).*never fires|[Uu]ndefined means .{0,4}.whole.{0,3}build|whole.?build view \(drvPath undefined\)|no derivation filter on the log stream|absorbed by .{0,80}(CreateFleet|Karpenter) batching|the witnessed lane carries no|gp3 max is 16[kK0 ]|\bL-B3A130E6\b'
         # merged_bug_081: every escape token WORD-BOUND — the old
         # unanchored vocabulary legalized live narration via substrings

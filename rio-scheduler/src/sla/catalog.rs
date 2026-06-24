@@ -96,8 +96,33 @@ pub(crate) mod label {
     pub const SIZE: &str = "karpenter.k8s.aws/instance-size";
     pub const LOCAL_NVME: &str = "karpenter.k8s.aws/instance-local-nvme";
     pub const CPU_MANUFACTURER: &str = "karpenter.k8s.aws/instance-cpu-manufacturer";
+    pub const CPU: &str = "karpenter.k8s.aws/instance-cpu";
+    pub const MEMORY: &str = "karpenter.k8s.aws/instance-memory";
     pub const ARCH: &str = "kubernetes.io/arch";
+    pub const OS: &str = "kubernetes.io/os";
 }
+
+/// Every label key [`karpenter_labels`] (and `CatalogEntry::for_test`)
+/// can populate. [`super::config::SlaConfig::validate_shape`] rejects
+/// any `hw_classes.requirements[].key` outside this set: a requirement
+/// on a key the matcher never synthesizes evaluates to `false` for
+/// every catalog entry (`In`/`Gt`/`Lt`/`Exists` on absent → no-match),
+/// routing the class through the (0,0)-exclusion arm of
+/// [`derive_ceilings`] — silently, since Karpenter itself DOES know the
+/// key. live_101: `instance-cpu Lt "9"` excluded both fetcher classes
+/// at boot before [`label::CPU`] existed here. Adding a label const →
+/// add it here AND insert it in `karpenter_labels()` + `for_test()`.
+pub(crate) const SYNTHESIZED_LABELS: &[&str] = &[
+    label::CATEGORY,
+    label::GENERATION,
+    label::SIZE,
+    label::LOCAL_NVME,
+    label::CPU_MANUFACTURER,
+    label::CPU,
+    label::MEMORY,
+    label::ARCH,
+    label::OS,
+];
 
 /// Insert [`label::LOCAL_NVME`] iff `gb > 0`. Karpenter only stamps
 /// the label on instances WITH local NVMe — absent on ebs-only types
@@ -161,7 +186,10 @@ impl CatalogEntry {
         labels.insert(label::CATEGORY, category);
         labels.insert(label::GENERATION, generation);
         labels.insert(label::SIZE, size);
+        labels.insert(label::CPU, cores.to_string());
+        labels.insert(label::MEMORY, (mem_gib << 10).to_string());
         labels.insert(label::ARCH, arch.to_owned());
+        labels.insert(label::OS, "linux".to_owned());
         maybe_nvme_label(&mut labels, nvme_gb);
         Self {
             name: name.into(),
@@ -187,7 +215,7 @@ pub fn from_instance_type_info(it: &InstanceTypeInfo) -> Option<CatalogEntry> {
     if mem_mib <= 0 {
         return None;
     }
-    let labels = karpenter_labels(it, &name);
+    let labels = karpenter_labels(it, &name, cores, mem_mib);
     Some(CatalogEntry {
         name,
         cores: cores as u32,
@@ -197,15 +225,34 @@ pub fn from_instance_type_info(it: &InstanceTypeInfo) -> Option<CatalogEntry> {
 }
 
 /// Derive Karpenter discovery labels for an instance type. Name
-/// parsing is [`parse_family`]; `requirements` select on
-/// category+generation only.
+/// parsing is [`parse_family`]. The full key set is
+/// [`SYNTHESIZED_LABELS`] — `validate_shape` rejects requirement keys
+/// outside it so an unmodelled key cannot silently (0,0)-exclude a
+/// class (live_101).
 // r[impl scheduler.sla.ceiling.catalog-derived+4]
-fn karpenter_labels(it: &InstanceTypeInfo, name: &str) -> BTreeMap<&'static str, String> {
+fn karpenter_labels(
+    it: &InstanceTypeInfo,
+    name: &str,
+    cores: i32,
+    mem_mib: i64,
+) -> BTreeMap<&'static str, String> {
     let mut m = BTreeMap::new();
     let (category, generation, size) = parse_family(name);
     m.insert(label::CATEGORY, category);
     m.insert(label::GENERATION, generation);
     m.insert(label::SIZE, size);
+    // live_101: `instance-cpu`/`instance-memory` are real Karpenter
+    // discovery labels (vCPU count; memory in MiB). Their absence here
+    // made `instance-cpu Lt "9"` fail-closed for every entry →
+    // fetcher-{x86,arm} (0,0)-excluded → controller fell to global
+    // and minted self-contradictory (cores=16 ∧ instance-cpu<9) claims.
+    m.insert(label::CPU, cores.to_string());
+    m.insert(label::MEMORY, mem_mib.to_string());
+    // Karpenter stamps `kubernetes.io/os=linux` on every Linux node;
+    // every catalog row we admit is Linux. Carried so VM-test/static
+    // fixtures' `kubernetes.io/os In [linux]` no-op requirement passes
+    // the `SYNTHESIZED_LABELS` allowlist truthfully.
+    m.insert(label::OS, "linux".to_owned());
     if let Some(arch) = it
         .processor_info()
         .and_then(|p| p.supported_architectures().iter().find_map(k8s_arch))
@@ -769,6 +816,90 @@ mod tests {
         }
     }
 
+    /// live_101: `instance-cpu Lt "9"` and `instance-memory Lt N` are
+    /// honoured by the matcher. Pre-fix `karpenter_labels()` did not
+    /// synthesize either key, so `Lt` saw `v=None` → `num_cmp` → None →
+    /// `is_some_and` → false for every catalog entry, and the fetcher
+    /// classes were (0,0)-excluded at boot. The `validate_shape`
+    /// allowlist (`SYNTHESIZED_LABELS`) now refuses such a key at
+    /// config load — this test pins the matcher half.
+    // r[verify scheduler.sla.ceiling.catalog-derived+4]
+    #[test]
+    fn instance_cpu_and_memory_are_synthesized_and_match() {
+        let small = CatalogEntry::for_test("c6a.2xlarge", 8, 16, "amd64", 0);
+        let big = CatalogEntry::for_test("c6a.4xlarge", 16, 32, "amd64", 0);
+        // instance-cpu Lt "9": 8 < 9 matches; 16 < 9 does not.
+        let cpu_lt_9 = [req(label::CPU, "Lt", &["9"])];
+        assert!(
+            requirements_match(&cpu_lt_9, &small.labels),
+            "c6a.2xlarge (8 vCPU) satisfies instance-cpu Lt 9"
+        );
+        assert!(
+            !requirements_match(&cpu_lt_9, &big.labels),
+            "c6a.4xlarge (16 vCPU) does NOT satisfy instance-cpu Lt 9"
+        );
+        // instance-memory Lt "17000" (MiB): 16GiB=16384 < 17000; 32GiB=32768 not.
+        let mem_lt = [req(label::MEMORY, "Lt", &["17000"])];
+        assert!(
+            requirements_match(&mem_lt, &small.labels),
+            "16GiB (16384 MiB) satisfies instance-memory Lt 17000"
+        );
+        assert!(
+            !requirements_match(&mem_lt, &big.labels),
+            "32GiB (32768 MiB) does NOT satisfy instance-memory Lt 17000"
+        );
+        // End-to-end: derive_ceilings with the live_101 fetcher shape
+        // picks the ≤8-vCPU argmax (8-1=7), not (0,0)-excluded.
+        let classes = HashMap::from([(
+            "fetcher-x86".to_owned(),
+            hw(
+                "rio-fetcher",
+                vec![
+                    req(label::CATEGORY, "In", &["c", "m", "r", "t"]),
+                    req(label::GENERATION, "Gt", &["3"]),
+                    req(label::CPU, "Lt", &["9"]),
+                ],
+            ),
+        )]);
+        let out = derive_ceilings(&[small, big], &classes, &[], &[]);
+        assert_eq!(
+            out.get("fetcher-x86"),
+            Some(&(7, (16u64 << 30) / 10 * 9)),
+            "instance-cpu Lt 9 filters to c6a.2xlarge → (8-1, 16GiB×0.9); \
+             pre-fix this class was (0,0)-EXCLUDED"
+        );
+    }
+
+    /// [`SYNTHESIZED_LABELS`] is the allowlist `validate_shape` enforces;
+    /// it MUST cover every key `karpenter_labels()` can emit
+    /// (else a key the matcher knows is rejected at config load) and
+    /// MUST NOT name a key `karpenter_labels()` never emits (else the
+    /// allowlist re-admits the live_101 silent-exclusion shape). One
+    /// fully-populated InstanceTypeInfo exercises every conditional arm.
+    #[test]
+    fn synthesized_labels_const_matches_karpenter_labels() {
+        use aws_sdk_ec2::types::{InstanceStorageInfo, ProcessorInfo, VCpuInfo};
+        let it = InstanceTypeInfo::builder()
+            .v_cpu_info(VCpuInfo::builder().default_v_cpus(8).build())
+            .processor_info(
+                ProcessorInfo::builder()
+                    .supported_architectures(ArchitectureType::X8664)
+                    .manufacturer("AMD")
+                    .build(),
+            )
+            .instance_storage_info(InstanceStorageInfo::builder().total_size_in_gb(950).build())
+            .build();
+        let emitted: std::collections::BTreeSet<_> =
+            karpenter_labels(&it, "c8gd.2xlarge", 8, 16384)
+                .into_keys()
+                .collect();
+        let declared: std::collections::BTreeSet<_> = SYNTHESIZED_LABELS.iter().copied().collect();
+        assert_eq!(
+            emitted, declared,
+            "SYNTHESIZED_LABELS must equal the full karpenter_labels() key set"
+        );
+    }
+
     /// `Gt 0` on `instance-local-nvme` excludes ebs-only types; the
     /// nvme-only argmax wins.
     #[test]
@@ -809,7 +940,7 @@ mod tests {
         use aws_sdk_ec2::types::InstanceStorageInfo;
         // ebs-only: no instance_storage_info at all (the real API shape).
         let ebs_only = InstanceTypeInfo::builder().build();
-        let ebs_labels = karpenter_labels(&ebs_only, "c8a.48xlarge");
+        let ebs_labels = karpenter_labels(&ebs_only, "c8a.48xlarge", 192, 393216);
         assert!(
             !ebs_labels.contains_key(label::LOCAL_NVME),
             "ebs-only type must NOT carry the instance-local-nvme label \
@@ -823,7 +954,7 @@ mod tests {
                     .build(),
             )
             .build();
-        let nvme_labels = karpenter_labels(&nvme, "c8gd.metal-48xl");
+        let nvme_labels = karpenter_labels(&nvme, "c8gd.metal-48xl", 192, 393216);
         assert_eq!(
             nvme_labels.get(label::LOCAL_NVME).map(String::as_str),
             Some("5700"),

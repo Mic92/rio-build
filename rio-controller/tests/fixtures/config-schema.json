@@ -64,6 +64,7 @@
             "*": 300.0,
             "fetcher-*": 600.0
           },
+          "backlog_floor_cap_ratio": 1.0,
           "lead_time_seed": {},
           "default_lead_time_seed": 30.0,
           "sketch_halflife_secs": 21600,
@@ -191,7 +192,7 @@
             "default": null
           },
           "min_consolidation_time": {
-            "description": "r35 bug_050: per-hw-class-prefix `consolidate_after` floor\n(seconds). §13e routed Fetcher Pools through `nodeclaim_pool`,\nsilently dropping Karpenter's `consolidateAfter: 10m` to the\nNA-model floor `boot_median/2` (~15s) — a fetcher node burns a\nboot every 15s of lull instead of holding 10min. The NA model is\ncorrect (it observed the right λ); the *policy floor* was lost\nin the migration. Keys are class names or `<prefix>*` globs\nmatched against `cell.0` (most-specific exact match wins, then\nlongest prefix). Default `{\"fetcher-*\": 600.0, \"*\": 300.0}`:\nfetchers restore the pre-§13e Karpenter behavior; builders get a\n300s floor (`boot_median/2 ≈ 9s` is below the ~18s boot cost it's\nsupposed to amortize — reaping there is strictly dominated; see\n[`Self::default`]). Helm:\n`karpenter.nodeclaimPool.minConsolidationTime`.\n\n`BTreeMap` (not `HashMap`) so the default serializes in a stable\nkey order into the frozen config-schema snapshot; the lookup in\n[`Self::min_consolidation_time_for`] is order-independent.",
+            "description": "r35 bug_050: per-hw-class-prefix `consolidate_after` floor\n(seconds). §13e routed Fetcher Pools through `nodeclaim_pool`,\nsilently dropping Karpenter's `consolidateAfter: 10m` to the\nNA-model floor `boot_median/2` (~15s) — a fetcher node burns a\nboot every 15s of lull instead of holding 10min. The NA model is\ncorrect (it observed the right λ); the *policy floor* was lost\nin the migration. Keys are class names or `<prefix>*` globs\nmatched against `cell.0` (most-specific exact match wins, then\nlongest prefix). Default `{\"fetcher-*\": 600.0, \"*\": 300.0}`:\nfetchers restore the pre-§13e Karpenter behavior; builders get a\n300s floor (`boot_median/2 ≈ 9s` is below the ~18s boot cost it's\nsupposed to amortize — reaping there is strictly dominated; see\n[`Self::default`]). Helm:\n`karpenter.nodeclaimPool.minConsolidationTime`.\n\n`BTreeMap` (not `HashMap`) so the default serializes in a stable\nkey order into the frozen config-schema snapshot; the lookup in\n[`Self::min_consolidation_time_for`] is order-independent.\n\nCross-knob coupling: when `max_consolidation_time` is unset, the\nbacklog warm-floor's per-cell staleness bound is\n[`Self::STALE_BACKLOG_FACTOR`] × this entry — lowering a class's\nfloor narrows how long a cached `pending_by_system` snapshot is\ntrusted on the degraded `consolidate_only` path.",
             "type": "object",
             "additionalProperties": {
               "type": "number",
@@ -201,6 +202,12 @@
               "*": 300.0,
               "fetcher-*": 600.0
             }
+          },
+          "backlog_floor_cap_ratio": {
+            "description": "Cap the backlog warm-floor at this fraction of a cell's\ncurrently-registered (non-terminating) node count. `1.0` =\n\"never idle-reap while any Queued backlog exists for a system\nthis cell admits\"; `0.0` disables the floor entirely (pre-floor\nsemantics). The floor is `min(pending_for_cell, ⌈registered ×\nratio⌉)` — see `reap_idle` Phase 0. Validated `{0.0} ∪ [0.001,\n1.0]` at config load (sub-‰ nonzero rejected — would round to 0\nat the milli-precision read site; helm renders full-precision\nvia `rio.requiredFloatTOML` so a sub-‰ override reaches that\nvalidate). Quantised to per-mille (3 decimal places). Helm:\n`karpenter.nodeclaimPool.backlogFloorCapRatio`.",
+            "type": "number",
+            "format": "double",
+            "default": 1.0
           },
           "lead_time_seed": {
             "description": "`(hw_class:cap)` → seed lead-time seconds, written by\n`xtask k8s probe-boot`. Seeds the lead-time sketch on cold start.\nHelm: `sla.leadTimeSeed`.",
@@ -292,6 +299,7 @@
         "*": 300.0,
         "fetcher-*": 600.0
       },
+      "backlog_floor_cap_ratio": 1.0,
       "lead_time_seed": {},
       "default_lead_time_seed": 30.0,
       "sketch_halflife_secs": 21600,

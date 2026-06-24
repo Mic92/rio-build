@@ -142,6 +142,80 @@ impl rio_common::config::ValidateConfig for Config {
             self.nodeclaim_pool.max_fleet_cores > 0,
             "nodeclaim_pool.max_fleet_cores must be > 0"
         );
+        // Validated once at boot so the per-cell-per-tick read site
+        // (`compute_warm_floor_for`) can trust the field — the prior
+        // per-tick `is_nan() / clamp(0,1)` guard was the wrong
+        // altitude (immutable config sanitised on every read) and the
+        // sibling f64 knobs (max_consolidation_time, lead_time_seed,
+        // default_lead_time_seed) had no equivalent guard.
+        let cap_ratio = self.nodeclaim_pool.backlog_floor_cap_ratio;
+        anyhow::ensure!(
+            (0.0..=1.0).contains(&cap_ratio),
+            "nodeclaim_pool.backlog_floor_cap_ratio must be in [0.0, 1.0] \
+             (got {cap_ratio}); 0.0 disables the floor, 1.0 = never \
+             idle-reap while admitted backlog exists",
+        );
+        // `compute_warm_floor_for` computes ⌈live × ratio⌉ at
+        // milli-precision; a sub-‰ nonzero value (0.0 < r < 0.001)
+        // rounds to 0 milli — operator intent ("nonzero floor")
+        // silently becomes "floor disabled". Reject at boot so the
+        // per-tick read site can use a plain round with no
+        // `0 if r>0.0 => 1` special-case. Helm renders the ratio via
+        // `rio.requiredFloatTOML` (full precision, always a TOML float
+        // literal) so a sub-‰ helm override reaches THIS ensure
+        // verbatim — helm and direct-TOML agree on operator feedback
+        // (loud reject, not silent round-to-0.000 by the chart).
+        anyhow::ensure!(
+            cap_ratio == 0.0 || cap_ratio >= 0.001,
+            "nodeclaim_pool.backlog_floor_cap_ratio must be 0.0 or ≥ 0.001 \
+             (got {cap_ratio}); sub-‰ nonzero rounds to 0 at the \
+             milli-precision ⌈live × ratio⌉ read site"
+        );
+        // `compute_warm_floor_for`'s milli-quantise scopes its own
+        // correctness to "any 3-decimal-place input"; enforce that
+        // precondition here so a 4th-dp tie (e.g. 0.0025 → ratio_milli
+        // = round(2.5) = 3) cannot diverge from the documented
+        // `⌈registered × ratio⌉`. Round-trip via the same quantise the
+        // read site uses; tolerance bounds float64 representation noise
+        // (≤1e-13 at this scale) without admitting any operator-typed
+        // 4th decimal (smallest delta: 5e-4 at the half-tie).
+        let milli = (cap_ratio * 1000.0).round();
+        anyhow::ensure!(
+            (milli / 1000.0 - cap_ratio).abs() < 1e-9,
+            "nodeclaim_pool.backlog_floor_cap_ratio must have at most 3 \
+             decimal places (got {cap_ratio}); the read site quantises \
+             to milli-precision and a 4th-dp value diverges from the \
+             documented ⌈registered × ratio⌉"
+        );
+        // `≥ 0 ∧ finite` is field-intrinsic, not warm-floor-coupled —
+        // checked unconditionally. Both knobs are read by the
+        // NA-threshold / hold_open path regardless of `cap_ratio`.
+        //
+        // Why `≥ 0` (NOT `> 0`): 0.0 is a no-op for both consumers —
+        // `consolidate_after`'s `(boot_median/2).max(min)` lets the
+        // model floor win, and `hold_open_threshold`'s `.max(na)`
+        // clamps `max=Some(0.0)` to bare `na` — so a previously-booted
+        // `min[k]=0.0` / `max=0.0` override remains valid after
+        // rollout (origin/main accepts it; rejecting it here would
+        // crash-loop a config the upgrade didn't change). The
+        // staleness bound collapsing to 0 under a 0.0 override is the
+        // operator's explicit choice and is itself a no-op at the
+        // shipped `cap_ratio=0.0`. Only negative/NaN/Inf are rejected
+        // — those are nonsensical regardless of consumer.
+        if let Some(max) = self.nodeclaim_pool.max_consolidation_time {
+            anyhow::ensure!(
+                max.is_finite() && max >= 0.0,
+                "nodeclaim_pool.max_consolidation_time must be a finite \
+                 non-negative float when set (got {max})"
+            );
+        }
+        for (k, &v) in &self.nodeclaim_pool.min_consolidation_time {
+            anyhow::ensure!(
+                v.is_finite() && v >= 0.0,
+                "nodeclaim_pool.min_consolidation_time[{k:?}] must be a \
+                 finite non-negative float (got {v})"
+            );
+        }
         Ok(())
     }
 }

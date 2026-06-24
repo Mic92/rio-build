@@ -974,6 +974,7 @@ pub fn window_mintability(
         .collect();
     let live_free_cores: u64 = live
         .iter()
+        // reglive-exempt: window-mintability counts in-flight allocatable
         .filter(|n| n.cell.is_some() && !n.terminating())
         .map(|n| u64::from(n.free().0))
         .sum();
@@ -1068,10 +1069,7 @@ pub fn build_nodeclaim(
     // hardcoding entirely). Requires a §SCC sweep across mid-*/large-*/
     // metal-* hwClass entries to declare the builder taint+label
     // explicitly. Out of scope for §13e.
-    let is_fetcher_cell = hw
-        .provides_features
-        .iter()
-        .any(|f| f == rio_common::k8s::FETCHER_FEATURE);
+    let is_fetcher_cell = rio_common::k8s::provides_fetcher(&hw.provides_features);
     let (role_k, role_v) = if is_fetcher_cell {
         (super::NODE_ROLE_LABEL.0, "fetcher")
     } else {
@@ -2217,7 +2215,7 @@ mod tests {
                 NodeSelectorRequirement {
                     key: "karpenter.k8s.aws/instance-generation".into(),
                     operator: "In".into(),
-                    values: vec!["6".into(), "7".into()],
+                    values: vec!["7".into()],
                 },
                 NodeSelectorRequirement {
                     key: "kubernetes.io/arch".into(),
@@ -2342,7 +2340,7 @@ mod tests {
             .iter()
             .find(|r| r.key == "karpenter.k8s.aws/instance-generation")
             .unwrap();
-        assert_eq!(gen_req.values, vec!["6", "7"]);
+        assert_eq!(gen_req.values, vec!["7"]);
         let cap_req = spec
             .requirements
             .iter()

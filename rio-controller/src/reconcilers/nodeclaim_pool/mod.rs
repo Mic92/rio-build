@@ -492,7 +492,25 @@ pub struct NodeClaimPoolConfig {
     /// `BTreeMap` (not `HashMap`) so the default serializes in a stable
     /// key order into the frozen config-schema snapshot; the lookup in
     /// [`Self::min_consolidation_time_for`] is order-independent.
+    ///
+    /// Cross-knob coupling: when `max_consolidation_time` is unset, the
+    /// backlog warm-floor's per-cell staleness bound is
+    /// [`Self::STALE_BACKLOG_FACTOR`] × this entry — lowering a class's
+    /// floor narrows how long a cached `pending_by_system` snapshot is
+    /// trusted on the degraded `consolidate_only` path.
     pub min_consolidation_time: BTreeMap<String, f64>,
+    /// Cap the backlog warm-floor at this fraction of a cell's
+    /// currently-registered (non-terminating) node count. `1.0` =
+    /// "never idle-reap while any Queued backlog exists for a system
+    /// this cell admits"; `0.0` disables the floor entirely (pre-floor
+    /// semantics). The floor is `min(pending_for_cell, ⌈registered ×
+    /// ratio⌉)` — see `reap_idle` Phase 0. Validated `{0.0} ∪ [0.001,
+    /// 1.0]` at config load (sub-‰ nonzero rejected — would round to 0
+    /// at the milli-precision read site; helm renders full-precision
+    /// via `rio.requiredFloatTOML` so a sub-‰ override reaches that
+    /// validate). Quantised to per-mille (3 decimal places). Helm:
+    /// `karpenter.nodeclaimPool.backlogFloorCapRatio`.
+    pub backlog_floor_cap_ratio: f64,
     /// `(hw_class:cap)` → seed lead-time seconds, written by
     /// `xtask k8s probe-boot`. Seeds the lead-time sketch on cold start.
     /// Helm: `sla.leadTimeSeed`.
@@ -565,6 +583,24 @@ impl NodeClaimPoolConfig {
             })
             .unwrap_or(self.default_lead_time_seed)
     }
+
+    /// Hard fallback when [`Self::min_consolidation_time_for`] resolves
+    /// `None`. ONE constant: the Default `"*"` entry, the consolidate.rs
+    /// `stale_after` double-None arm, and the helm `values.yaml`
+    /// `minConsolidationTime."*"` default all express the same 300s; the
+    /// helm side is a checked literal (helm-lint key-population baseline
+    /// would catch removal, the value itself is not cross-checked).
+    pub const MIN_CONSOLIDATION_TIME_FALLBACK_SECS: f64 = 300.0;
+
+    /// `pending_by_system` staleness bound multiplier when
+    /// [`Self::max_consolidation_time`] is unset: the cached snapshot
+    /// is considered fresh for `STALE_BACKLOG_FACTOR ×
+    /// min_consolidation_time_for(cell)` seconds (design §4.4). 2× the
+    /// per-cell consolidate floor: long enough that one missed
+    /// scheduler poll cannot zero the warm-floor, short enough that a
+    /// genuinely stale cache cannot pin nodes indefinitely. Read at
+    /// `consolidate::reap_idle`'s `stale_after` resolution.
+    pub const STALE_BACKLOG_FACTOR: f64 = 2.0;
 
     /// r35 bug_050: `min_consolidation_time[cell]` — the operator floor
     /// for `consolidate::consolidate_after`. `None` when no entry
@@ -758,17 +794,28 @@ impl Default for NodeClaimPoolConfig {
             // (r38 bug_022) — for bin-packed cells the floor is the
             // threshold, which is fine: DAG-shaped demand is
             // deterministic, not stochastic, and a hazard model can't
-            // see it. Targeted fix is a backlog-aware floor (scheduler
-            // aggregates Queued cores per cell into
-            // `GetSpawnIntentsResponse`; controller raises floor while
-            // nonzero) so this stops being blind insurance.
+            // see it.
+            //
+            // The DAG-depth blind spot is closed by the backlog-aware
+            // count-floor (`ctrl.nodeclaim.backlog-floor`): the
+            // scheduler ships full-population `pending_by_system` on
+            // the same `GetSpawnIntentsResponse`, and `reap_idle` holds
+            // `min(pending, ⌈registered × backlog_floor_cap_ratio⌉)`
+            // nodes per cell while it's nonzero — so the 300s static
+            // floor is now genuine sub-5min insurance, not the only
+            // DAG-shape defence.
             //
             // Lookup precedence: longest prefix glob wins, so `fetcher-*`
             // (len 8) overrides `*` (len 0) for fetcher cells.
             min_consolidation_time: BTreeMap::from([
                 ("fetcher-*".into(), 600.0),
-                ("*".into(), 300.0),
+                ("*".into(), Self::MIN_CONSOLIDATION_TIME_FALLBACK_SECS),
             ]),
+            // r[impl ctrl.nodeclaim.backlog-floor]: 1.0 = never idle-reap
+            // while any Queued backlog admits this cell. Rollout starts
+            // at 0.0 in helm `values.yaml` (mechanism wired, floor
+            // disabled) — the code default is the steady-state.
+            backlog_floor_cap_ratio: 1.0,
             lead_time_seed: HashMap::new(),
             // Matches helm `sla.defaultLeadTimeSeed` default. Non-zero
             // so an unseeded cell's `health::classify` timeout (2×seed)
@@ -956,6 +1003,21 @@ pub struct NodeClaimPoolReconciler {
     /// cycles are unobservable; treating them as fresh-idle is the only
     /// safe assumption.
     prev_idle: HashMap<String, f64>,
+    /// Last successful `GetSpawnIntentsResponse.pending_by_system`
+    /// (system → full-population Queued-status drv count). The
+    /// `consolidate_only` fallback cache for the backlog warm-floor —
+    /// mirrors `pending_evidence`'s buffer-across-⊥ role. Updated on
+    /// every successful poll; NOT cleared on the lease-acquire edge
+    /// (scheduler fact, not a controller tenure observation — a lease
+    /// flip should not drop backlog protection; contrast `prev_idle`'s
+    /// AMPLIFY polarity above). Staleness-bounded by
+    /// `last_pending_at` inside `reap_idle` Phase-0.
+    last_pending_by_system: HashMap<String, u64>,
+    /// Epoch-secs at which `last_pending_by_system` was produced.
+    /// `0.0` = never (cold start) → `now − 0.0` exceeds any staleness
+    /// bound → floor=0 → pre-floor semantics until the first
+    /// successful poll.
+    last_pending_at: f64,
     /// Cells written by [`Self::emit_live_gauges`] last tick that were
     /// NOT in `all_cells()` (i.e. carried by a live NodeClaim whose
     /// hwClass was removed from config mid-rollout). r41 bug_025: a
@@ -1147,6 +1209,8 @@ impl NodeClaimPoolReconciler {
             sketches,
             recorded_boot: HashSet::new(),
             prev_idle: HashMap::new(),
+            last_pending_by_system: HashMap::new(),
+            last_pending_at: 0.0,
             prev_extra_cells: HashSet::new(),
             prev_unplaced_extras: HashSet::new(),
             inflight_created: HashMap::new(),
@@ -1275,6 +1339,13 @@ impl NodeClaimPoolReconciler {
             // the time the Ok arm executed, previous-tenure state was
             // already gone.
             self.prev_idle.clear();
+            // `last_pending_by_system` / `last_pending_at` are NOT
+            // cleared here: scheduler-fact polarity (the backlog count
+            // is true regardless of which controller replica observed
+            // it). Clearing would drop warm-floor protection across a
+            // lease flip — the over-reap this mechanism exists to
+            // prevent. Staleness is bounded by `last_pending_at`
+            // independently of tenure.
             self.pending_evidence = PendingSchedulerEvidence::default();
             self.inflight_created.clear();
             // Same suppress polarity as `inflight_created`: a stale
@@ -1616,6 +1687,23 @@ impl NodeClaimPoolReconciler {
             }
         }
 
+        let now = epoch_secs(now_sys);
+        // r[impl ctrl.nodeclaim.backlog-floor]
+        // Cache the full-population Queued aggregate for `reap_idle`'s
+        // warm-floor. `mem::take`: the only later reads of `intents.*`
+        // are `.ice_masked_cells` (mintability mask) and `.intents`
+        // (the FFD sim) — neither touches `.pending_by_system`; the
+        // Phase-0 floor reads `self.last_pending_by_system`, NOT the
+        // (now-emptied) response field. Cached unconditionally on every
+        // successful poll — written BEFORE the fallible Pod/NodeClaim
+        // LISTs below so a transient apiserver error after a healthy
+        // scheduler poll still leaves `consolidate_only` with the
+        // freshest last-known value; the ⊥-tick early-return above
+        // does NOT touch `last_pending_at`, so the staleness clock
+        // keeps running.
+        self.last_pending_by_system = std::mem::take(&mut intents.pending_by_system);
+        self.last_pending_at = now;
+
         // §4(a)1: one label-selected Pod LIST per tick — the source of
         // `LiveNode.requested`, FFD's bound-intent short-circuit, the
         // OA2 wedge attribution fallback, and the scheduler-shipped
@@ -1625,7 +1713,6 @@ impl NodeClaimPoolReconciler {
         // silent stale-data degradation.
         let pod_snapshot = self.list_pool_pods().await?;
         let live = self.list_live_nodeclaims(&pod_snapshot).await?;
-        let now = epoch_secs(now_sys);
         // `registered_cells` feeds `report_unfulfillable`'s ICE-clear;
         // `observed_types` feeds the scheduler's `CostTable.cells`
         // (R24B7 instance-type autodiscovery).
@@ -1659,6 +1746,7 @@ impl NodeClaimPoolReconciler {
         // pathological tick cannot starve the reconciler runtime.
         let live_free_cores: u64 = live
             .iter()
+            // reglive-exempt: window-mintability counts in-flight allocatable
             .filter(|n| n.cell.is_some() && !n.terminating())
             .map(|n| u64::from(n.free().0))
             .sum();
@@ -1696,10 +1784,7 @@ impl NodeClaimPoolReconciler {
             window_cores,
             self.tick_counter,
             &mintability,
-            |h, a, f| {
-                self.hw_config.matches_arch(h, a)
-                    && rio_common::k8s::features_compatible(f, &self.hw_config.provides_for(h))
-            },
+            |h, a, f| self.hw_config.admits_intent(h, a, f),
         )
         .await;
         // Unconditional write (incl. zero) — Prometheus gauge freshness:
@@ -1800,6 +1885,7 @@ impl NodeClaimPoolReconciler {
         let evictions = std::mem::take(&mut self.pending_wedge_evictions);
         let registered_fleet: std::collections::HashSet<String> = live
             .iter()
+            // reglive-exempt: wedge admission — Node still on cluster while draining
             .filter(|n| n.registered)
             .filter_map(|n| n.node_name.clone())
             .collect();
@@ -1974,13 +2060,23 @@ impl NodeClaimPoolReconciler {
             &consolidate::ReapInputs {
                 placeable: &placeable,
                 deferred: &deferred,
+                pending_by_system: &self.last_pending_by_system,
+                pending_at: self.last_pending_at,
                 all_cells: &all_cells,
                 prev_idle: &self.prev_idle,
                 cfg: &self.cfg,
-                hw_admits: |h, a, f| {
-                    self.hw_config.matches_arch(h, a)
-                        && rio_common::k8s::features_compatible(f, &self.hw_config.provides_for(h))
-                },
+                // Single-find composites on `HwClassConfig` (one
+                // `classes.read()`+scan per call); the closure wrapper
+                // is the &self↔&mut self.sketches borrow-split seam.
+                // TODO: the remaining `ReapInputs` field duplication
+                // with `consolidate_only` below is mechanical (same
+                // cached pending state + cfg + closures), but a
+                // `fn reap_inputs(&self, …)` helper would take whole-
+                // `&self` and conflict with `&mut self.sketches` —
+                // disjoint field borrows are why this open-coded shape
+                // compiles. Revisit if a third callsite appears.
+                hw_admits: |h, a, f| self.hw_config.admits_intent(h, a, f),
+                arch_admits: |h, a| self.hw_config.admits_builder_backlog(h, a),
                 now_secs: now,
             },
         )
@@ -2068,13 +2164,24 @@ impl NodeClaimPoolReconciler {
                 // Consolidate-only mode has no scheduler view, hence
                 // no deferred set either (same ⊥ posture as placeable).
                 deferred: &[],
+                // Degraded-mode warm-floor: read the CACHED backlog.
+                // Staleness-bounded inside `reap_idle` Phase-0 by
+                // `now_secs - pending_at` vs the per-cell
+                // `stale_after` bound (`2 × min_consolidation_time`
+                // when `max` is unset) — a dead scheduler holds
+                // BUILDER cells ~10min under chart defaults, then the
+                // pre-floor consolidate_only reap resumes. Fetcher
+                // cells get NO warm-floor hold here (`arch_admits`
+                // below is `… ∧ ¬is_fetcher_class` →
+                // `pending_for_cell` ≡ 0); their only floor is the
+                // 600s NA `min_consolidation_time["fetcher-*"]`.
+                pending_by_system: &self.last_pending_by_system,
+                pending_at: self.last_pending_at,
                 all_cells: &all_cells,
                 prev_idle: &self.prev_idle,
                 cfg: &self.cfg,
-                hw_admits: |h, a, f| {
-                    self.hw_config.matches_arch(h, a)
-                        && rio_common::k8s::features_compatible(f, &self.hw_config.provides_for(h))
-                },
+                hw_admits: |h, a, f| self.hw_config.admits_intent(h, a, f),
+                arch_admits: |h, a| self.hw_config.admits_builder_backlog(h, a),
                 now_secs: now,
             },
         )
@@ -2213,7 +2320,12 @@ impl NodeClaimPoolReconciler {
             if let Some(ts) = n.terminating_since {
                 e.2 += 1;
                 e.4 = e.4.max((now_secs - ts).max(0.0));
-            } else if n.registered {
+            } else if n.is_registered_live() {
+                // `terminating_since` is None in this arm so the
+                // `¬terminating` term is tautological — routed through
+                // the wrapper anyway so `state=registered` co-tightens
+                // with the floor accounting / dead-reap-cap callers
+                // when the predicate evolves.
                 e.0 += 1;
             } else {
                 e.1 += 1;
@@ -2507,6 +2619,7 @@ impl NodeClaimPoolReconciler {
         // the local `created.len()` below.
         let live_unlaunched: u32 = live
             .iter()
+            // reglive-exempt: in-flight unlaunched count — inverse semantic
             .filter(|n| !n.registered && !n.terminating() && n.launched() != Some(true))
             .count() as u32;
         let mut created_cores = 0u32;

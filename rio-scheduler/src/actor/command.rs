@@ -1000,6 +1000,12 @@ pub struct SpawnIntentsSnapshot {
     /// admission), so the class covers exactly the forecast intents a
     /// controller can hold Pending Jobs for.
     pub forecast_by_system: std::collections::HashMap<String, u64>,
+    /// Per-system count of `status==Queued` derivations — the FULL
+    /// DAG-depth backlog (backlog warm-floor signal,
+    /// `ctrl.nodeclaim.backlog-floor`). NOT the Ready-class
+    /// `queued_by_system` and NOT the emitted-forecast class. Counted
+    /// pre-filter in the same `iter_nodes()` pass as `intents`.
+    pub pending_by_system: std::collections::HashMap<String, u64>,
     /// `IceBackoff::masked_cells()` snapshot, formatted via
     /// [`crate::sla::config::cell_label`]. The controller's
     /// `cover_deficit` mask merges this with its own

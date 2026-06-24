@@ -63,6 +63,16 @@ fn gauge_exemptions() -> Vec<GaugeExemption> {
                         ceilings); identical on every replica, no leader edge",
         },
         GaugeExemption {
+            name: "rio_scheduler_spawn_intents_pending_by_system",
+            rationale: "own-edge-owned: emitted at the GetSpawnIntents serving \
+                        chokepoint (admin/spawn_intents.rs); standby returns \
+                        NotServing before that path runs, so a standby never \
+                        WRITES it. Lose-edge zero-write: clear_persisted_state \
+                        → admin::zero_pending_by_system_gauge sweeps every \
+                        EMITTED_SYSTEMS label-series to 0.0 (open `system` \
+                        axis cannot join the closed-axis LeaderGauge family)",
+        },
+        GaugeExemption {
             name: "rio_scheduler_status_outbox_depth",
             rationale: "own-edge-owned: clear_persisted_state() zeroes it with the \
                         outbox it measures (every clear caller, not just \

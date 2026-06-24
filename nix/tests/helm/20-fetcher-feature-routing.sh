@@ -41,13 +41,17 @@ fail=0
 # extraction: anchored prefix/suffix sub (per r34 bug_014's fix —
 # `sub(/.*"/,…)` greedily collapses `h` to `]`).
 #
-# §1: every `fetcher-*` hwClass MUST have `nodeClass: rio-default`,
-#     `providesFeatures ∋ fetcher`, `labels ∋ {rio.build/fetcher: "true"}`,
-#     `taints ∋ {key: rio.build/fetcher, effect: NoSchedule}`. All four
-#     are load-bearing: nodeClass keeps fetchers off the BIOS-AMI
-#     partition (cover.rs metal_partition_op gates instance-size on it);
-#     providesFeatures is the routing key; the label is the per-intent
-#     affinity term; the taint keeps non-fetcher pods off.
+# §1: every `fetcher-*` hwClass MUST have `nodeClass: rio-fetcher`
+#     (live_101: low-IOPS volumes so small/t-category instances launch;
+#     same UEFI AMI as rio-default so still off the BIOS-AMI metal
+#     partition), `providesFeatures ∋ fetcher`, `labels ∋
+#     {rio.build/fetcher: "true"}`, `taints ∋ {key: rio.build/fetcher,
+#     effect: NoSchedule}`. All four are load-bearing: nodeClass keeps
+#     fetchers off the BIOS-AMI partition (cover.rs metal_partition_op
+#     gates instance-size on it) AND off the 80k-IOPS volume that only
+#     Block-Express sizes can attach; providesFeatures is the routing
+#     key; the label is the per-intent affinity term; the taint keeps
+#     non-fetcher pods off.
 # §2: no NON-`fetcher-*` hwClass advertises `providesFeatures ∋ fetcher`
 #     — the partition is exclusive. A builder class providing `fetcher`
 #     would absorb FOD intents and starve the fetcher tier.
@@ -65,7 +69,7 @@ fetcher_routing_awk='
   function flush() {
     if (h == "") return
     if (h ~ /^fetcher-/) {
-      if (nc != "\"rio-default\"") printf "%s: fetcher-* hwClass but nodeClass=%s (want rio-default)\n", h, nc
+      if (nc != "\"rio-fetcher\"") printf "%s: fetcher-* hwClass but nodeClass=%s (want rio-fetcher)\n", h, nc
       if (pf !~ /"fetcher"/)       printf "%s: fetcher-* hwClass but providesFeatures missing \"fetcher\"\n", h
       if (!haslbl)                 printf "%s: fetcher-* hwClass but labels missing rio.build/fetcher=true\n", h
       if (!hastaint)               printf "%s: fetcher-* hwClass but taints missing rio.build/fetcher:NoSchedule\n", h
@@ -122,7 +126,7 @@ helm template rio . \
   --set global.image.tag=test \
   --set postgresql.enabled=false \
   --set poolDefaults.enabled=true \
-  --set-json 'scheduler.sla.hwClasses.fetcher-notaint={"nodeClass":"rio-default","capacityTypes":["spot"],"providesFeatures":["fetcher"],"labels":[{"key":"rio.build/fetcher","value":"true"},{"key":"kubernetes.io/arch","value":"amd64"}],"requirements":[{"key":"kubernetes.io/arch","operator":"In","values":["amd64"]}]}' \
+  --set-json 'scheduler.sla.hwClasses.fetcher-notaint={"nodeClass":"rio-fetcher","capacityTypes":["spot"],"providesFeatures":["fetcher"],"labels":[{"key":"rio.build/fetcher","value":"true"},{"key":"kubernetes.io/arch","value":"amd64"}],"requirements":[{"key":"kubernetes.io/arch","operator":"In","values":["amd64"]}]}' \
   >"$neg_render"
 neg_toml=$TMPDIR/sched-fetcher-notaint.toml
 yq -N 'select(.kind=="ConfigMap" and .metadata.name=="rio-scheduler-config")

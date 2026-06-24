@@ -22,7 +22,7 @@ rm -rf "$T"; mkdir -p "$T"
 # ── the live surface: every EBS-only class carries the quota volume ──
 render_karpenter -s templates/karpenter.yaml > "$T/render.yaml"
 
-for nc in rio-default rio-metal; do
+for nc in rio-default rio-default-express rio-metal rio-fetcher; do
   awk -v nc="$nc" '
     $0 ~ "^  name: " nc "$" { in_nc=1 }
     in_nc && /^kind:/ && !/EC2NodeClass/ { in_nc=0 }
@@ -64,4 +64,4 @@ if render_karpenter -s templates/karpenter.yaml --set karpenter.quotaVolumeSize=
   exit 1
 fi
 
-echo "quota-volume pin: rio-default+rio-metal carry /dev/xvdb ($(yq -r '.karpenter.quotaVolumeSize' values.yaml)); rio-nvme exempt; nulled-size red caught"
+echo "quota-volume pin: rio-default{,-express}+rio-metal+rio-fetcher carry /dev/xvdb ($(yq -r '.karpenter.quotaVolumeSize' values.yaml)); rio-nvme exempt; nulled-size red caught"

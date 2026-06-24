@@ -910,6 +910,12 @@
         "description": "r35 bug_050: per-hw-class-prefix `consolidate_after` floor (seconds). §13e routed Fetcher Pools through `nodeclaim_pool`, silently dropping Karpenter's `consolidateAfter: 10m` to the NA-model floor `boot_median/2` (~15s) — a fetcher node burns a boot every 15s of lull instead of holding 10min."
       },
       {
+        "key": "nodeclaim_pool.backlog_floor_cap_ratio",
+        "type": "double",
+        "default": "1.0",
+        "description": "Cap the backlog warm-floor at this fraction of a cell's currently-registered (non-terminating) node count. `1.0` = \"never idle-reap while any Queued backlog exists for a system this cell admits\"; `0.0` disables the floor entirely (pre-floor semantics)."
+      },
+      {
         "key": "nodeclaim_pool.lead_time_seed",
         "type": "object",
         "default": "",

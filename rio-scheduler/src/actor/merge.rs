@@ -80,19 +80,20 @@ pub(super) struct PendingMerge {
 // concurrent phase-6c-reaching test. nextest's process-per-test model
 // masked this; CLAUDE.md's documented `cargo test` fallback does not.
 
-/// One-site emit for the merge-phase histogram + the per-phase debug
-/// line, and reset `t_phase` for the next phase. Called directly at
-/// every phase boundary in `prepare_merge_persist` /
-/// `reconcile_merged_state` / `flush_pending_merges` — no fn-local
-/// macro wrapper. (`housekeeping.rs`' `phase!` is the same shape for a
-/// different metric, but its body interleaves `drain_admin_fast_lane`
-/// between the elapsed capture and the reset, so it cannot share.)
+/// Merge-phase wrapper over [`super::record_phase`]: adds the
+/// per-phase `debug!` line (merge runs at intake rate, not fleet-claim
+/// rate, so the debug line is bounded). Called at every phase boundary
+/// in `prepare_merge_persist` / `reconcile_merged_state` /
+/// `flush_pending_merges`.
+///
+/// `record_phase` resets `t_phase` before the `debug!` dispatches, so
+/// the subscriber-write latency lands in the NEXT phase's sample
+/// (origin/main reset after). Accepted: sub-µs at the default
+/// non-blocking subscriber, below `MERGE_PHASE_BUCKETS` resolution;
+/// keeping the shared helper outweighs re-inlining the record/reset.
 fn record_merge_phase(phase: &'static str, t_phase: &mut Instant) {
-    let elapsed = t_phase.elapsed();
-    metrics::histogram!("rio_scheduler_merge_phase_seconds", "phase" => phase)
-        .record(elapsed.as_secs_f64());
+    let elapsed = super::record_phase("rio_scheduler_merge_phase_seconds", phase, t_phase);
     debug!(?elapsed, phase, "merge phase");
-    *t_phase = Instant::now();
 }
 
 /// Cross-phase carrier from [`DagActor::prepare_merge_persist`] to

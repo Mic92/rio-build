@@ -45,7 +45,28 @@
        rio-kubelet-mount.service (before=nodeadm-init+tmpfiles;
        settles udev, classifies once) owns mdadm→mkfs.xfs+prjquota→
        mount. */}}
-{{- range $nc := list (dict "name" "rio-default" "amd64Boot" "uefi") (dict "name" "rio-metal" "amd64Boot" "legacy-bios") (dict "name" "rio-nvme" "amd64Boot" "uefi") }}
+{{- /* rio-fetcher (live_101): same volume SIZES as rio-default; only
+       IOPS/throughput differ (lowIops branch below). See values.yaml
+       quotaVolumeSize block for the FFD/max_node_disk inequality that
+       makes per-cell sizing unsafe. xvdb (kubelet quota) stays at
+       gp3 baseline 3000/125; xvdc (NAR staging, sequential write)
+       gets 4000/1000 — gp3's non-Block-Express throughput ceiling, so
+       a bin-packed fetcher node isn't throttled by a single shared
+       125 MiB/s volume and still launches on any nitro size (>1000
+       would force BE, see rio-default-express below). */}}
+{{- /* rio-default-express (live_101 root): identical to rio-default
+       but with the 80k/2000 Block-Express quota volume. gp3 above
+       16000 IOPS or 1000 MiB/s requires a Block-Express attachment;
+       CreateFleet REJECTS (UnfulfillableCapacity) any non-BE-capable
+       instance type paired with such a volume — it does NOT clamp.
+       The 3e1472343 80k bump on rio-default thus shrank every
+       rio-default hwClass's launchable set to BE-capable sizes only,
+       and the resulting builder ICE storm poisoned Karpenter's
+       NodeClass-agnostic unavailableOfferings cache for fetchers too.
+       rio-default now carries 16k/1000 (the gp3 non-BE ceiling, valid
+       on every nitro size); only the hi-ebs-* hwClasses that already
+       select large gen-7/8 instances ride rio-default-express. */}}
+{{- range $nc := list (dict "name" "rio-default" "amd64Boot" "uefi" "defaultIops" true) (dict "name" "rio-default-express" "amd64Boot" "uefi") (dict "name" "rio-metal" "amd64Boot" "legacy-bios") (dict "name" "rio-nvme" "amd64Boot" "uefi") (dict "name" "rio-fetcher" "amd64Boot" "uefi" "lowIops" true) }}
 ---
 apiVersion: karpenter.k8s.aws/v1
 kind: EC2NodeClass
@@ -114,11 +135,24 @@ spec:
     # with prjquota via rio-kubelet-mount's NVMe branch. Sizing: see
     # values.yaml `quotaVolumeSize` block.
     - deviceName: /dev/xvdb
+      # rootVolume:true → Karpenter's ephemeral-storage allocatable
+      # estimate reads xvdb (quotaVolumeSize), not the AMI's
+      # RootDeviceName (xvda, rootVolumeSize). Without this,
+      # controller-minted NodeClaims requesting >~35Gi ephemeral
+      # resolve to zero candidate instance types and the cell
+      # ICE-masks. controller.toml's `max_node_disk` is derived from
+      # quotaVolumeSize — Karpenter must see the same volume.
+      # bind[59-ephemeral-rootvolume.sh]
+      rootVolume: true
       ebs:
+        # Same SIZE across all NodeClasses (lowIops/defaultIops
+        # branches affect IOPS/throughput only) — see values.yaml
+        # quotaVolumeSize block for the FFD/max_node_disk inequality
+        # and the live_101 resolveInstanceTypes() failure mode.
         volumeSize: {{ $k.quotaVolumeSize }}
         volumeType: gp3
-        iops: {{ $k.quotaVolumeIops }}
-        throughput: {{ $k.quotaVolumeThroughputMiBps }}
+        iops: {{ if $nc.lowIops }}3000{{ else if $nc.defaultIops }}{{ $k.quotaVolumeIopsDefault }}{{ else }}{{ $k.quotaVolumeIops }}{{ end }}
+        throughput: {{ if $nc.lowIops }}125{{ else if $nc.defaultIops }}{{ $k.quotaVolumeThroughputMiBpsDefault }}{{ else }}{{ $k.quotaVolumeThroughputMiBps }}{{ end }}
         deleteOnTermination: true
         encrypted: true
     # Dedicated /var/rio volume (rio-ebs-mount in the AMI formats it
@@ -127,10 +161,17 @@ spec:
     # handshake — see nix/nixos-node/eks-node.nix.
     - deviceName: /dev/xvdc
       ebs:
+        # 200Gi is for staging-quota headroom on bin-packed nodes
+        # (concurrent builds × stagingQuotaBytes), not FFD.
         volumeSize: {{ $k.rioVolumeSize }}
         volumeType: gp3
-        iops: {{ $k.rioVolumeIops }}
-        throughput: {{ $k.rioVolumeThroughputMiBps }}
+        # gp3 constraint: throughput ≤ iops/4. 4000/1000 satisfies it
+        # while keeping the no-Block-Express promise (BE only kicks in
+        # past 16000 IOPS). 3000/1000 would fail CreateFleet with
+        # "Throughput to iops ratio … too high; maximum is 0.25" —
+        # surfaced by Karpenter only at LOG_LEVEL=debug (live_101).
+        iops: {{ if $nc.lowIops }}4000{{ else }}{{ $k.rioVolumeIops }}{{ end }}
+        throughput: {{ if $nc.lowIops }}1000{{ else }}{{ $k.rioVolumeThroughputMiBps }}{{ end }}
         deleteOnTermination: true
         encrypted: true
   {{- end }}

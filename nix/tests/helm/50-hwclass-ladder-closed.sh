@@ -42,14 +42,16 @@ check_render prod \
 check_render vmtest-full -f values/vmtest-full.yaml
 
 # Self-check: a synthetic rung target with NO ladder MUST be flagged.
-# Inject a phantom rung onto hi-ebs-x86 pointing at lo-nvme-x86 (which
-# carries no ladder) and assert the check fails.
+# Decoupled from real classes (lo-nvme-x86 grew a ladder under sh-017;
+# fetcher-x86 may too): inject a synthetic ladder-less hwClass and a
+# phantom rung onto hi-ebs-x86 pointing at it.
 if check_render bad-dead-end \
   --set karpenter.enabled=true --set karpenter.clusterName=ci \
   --set karpenter.nodeRoleName=ci-role --set karpenter.amiTag=test \
   --set postgresql.enabled=false \
-  --set 'scheduler.sla.hwClasses.hi-ebs-x86.ladder.rungs[0].class=lo-nvme-x86' \
+  --set-json 'scheduler.sla.hwClasses.synthetic-no-ladder={"nodeClass":"rio-default","capacityTypes":["on-demand"],"labels":[],"requirements":[]}' \
+  --set 'scheduler.sla.hwClasses.hi-ebs-x86.ladder.rungs[0].class=synthetic-no-ladder' \
   2>/dev/null; then
-  echo "FAIL: dead-end rung target lo-nvme-x86 not flagged — fragment regression" >&2
+  echo "FAIL: dead-end rung target synthetic-no-ladder not flagged — fragment regression" >&2
   exit 1
 fi

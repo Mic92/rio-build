@@ -1228,6 +1228,11 @@ async fn spawn_intents_feature_filter() {
     assert!(snap.intents[0].required_features.is_empty());
     // queued_by_system is filter-independent (ComponentScaler reads it).
     assert_eq!(snap.queued_by_system.get("x86_64-linux"), Some(&3));
+    // ctrl.nodeclaim.backlog-floor: pending_by_system counts the
+    // status==Queued population only — this fixture is all-Ready (3
+    // nodes, 0 Queued), so the backlog map is empty regardless of the
+    // view filter (pins the empty-DAG → empty-map case).
+    assert!(snap.pending_by_system.is_empty());
 
     // --- kvm pool (Some(["kvm","nixos-test","big-parallel"])): b+c. ---
     // I-181: `a` (∅-feature) is EXCLUDED — featureless pool owns it.
@@ -2888,6 +2893,88 @@ async fn forecast_aggregate_counts_emitted_class_per_system() {
         snap.forecast_by_system.len(),
         1,
         "no phantom systems in the forecast class"
+    );
+}
+
+/// Backlog warm-floor signal (ctrl.nodeclaim.backlog-floor): the
+/// idle-gap incident shape — 1 Running bottleneck + 543 Queued
+/// dependents (the FULL DAG-depth backlog), no Ready work. With
+/// `lead_time_seed = {}` the §13b forecast pass is disabled, so the
+/// 1-layer frontier is depth-blind: `forecast_by_system` is empty,
+/// `queued_by_system` (Ready-class) is empty, `intents` is empty —
+/// every existing demand surface reads zero. `pending_by_system`
+/// alone carries the 543-wide fan-out the reaper is documented as
+/// blind to (`nodeclaim_pool/mod.rs:749-764`).
+// r[verify ctrl.nodeclaim.backlog-floor]
+#[tokio::test]
+async fn compute_spawn_intents_pending_by_system_deep_backlog() {
+    let db = TestDb::new(&MIGRATOR).await;
+    crate::actor::tests::seed_default_tenant(&db.pool).await;
+    let mut actor = bare_actor_sla(db.pool.clone()); // lead_time_seed = {}
+
+    actor.test_inject_at("root", "x86_64-linux", DerivationStatus::Running);
+    actor.test_set_running_eta("root", 400.0, 70, 8);
+    for i in 0..543u32 {
+        let h = format!("q{i:04}");
+        actor.test_inject_at(&h, "x86_64-linux", DerivationStatus::Queued);
+        actor.test_inject_edge(&h, "root");
+    }
+
+    let snap = actor.compute_spawn_intents(&SpawnIntentsRequest::default());
+    assert_eq!(
+        snap.pending_by_system.get("x86_64-linux").copied(),
+        Some(543),
+        "the FULL DAG-depth Queued backlog — every dependent counted"
+    );
+    assert_eq!(
+        snap.pending_by_system.len(),
+        1,
+        "no phantom systems in the backlog class"
+    );
+    assert!(
+        snap.queued_by_system.is_empty(),
+        "Ready-class aggregate stays zero — the bottleneck has no \
+         Ready dependents (the population class the warm-floor \
+         signal exists to NOT be)"
+    );
+    assert!(
+        snap.forecast_by_system.is_empty(),
+        "lead_time_seed empty → §13b frontier disabled → the depth-\
+         blind 1-layer aggregate sees nothing"
+    );
+    assert!(
+        snap.intents.is_empty(),
+        "no intents emitted (0 Ready, forecast off) — every existing \
+         demand surface reads zero; pending_by_system is the ONLY \
+         nonzero signal"
+    );
+}
+
+/// `pending_by_system` counts the `status==Queued` arm only —
+/// terminal/non-builder-demand statuses (Failed, DependencyFailed,
+/// Completed) hit the `_ => continue` arm and contribute nothing.
+/// Mixed population: 2 Queued + 1 each of {Failed, DependencyFailed,
+/// Completed, Running} → pending=2.
+// r[verify ctrl.nodeclaim.backlog-floor]
+#[tokio::test]
+async fn compute_spawn_intents_pending_excludes_terminal() {
+    let db = TestDb::new(&MIGRATOR).await;
+    crate::actor::tests::seed_default_tenant(&db.pool).await;
+    let mut actor = bare_actor_sla(db.pool.clone());
+
+    actor.test_inject_at("q0", "x86_64-linux", DerivationStatus::Queued);
+    actor.test_inject_at("q1", "x86_64-linux", DerivationStatus::Queued);
+    actor.test_inject_at("f", "x86_64-linux", DerivationStatus::Failed);
+    actor.test_inject_at("df", "x86_64-linux", DerivationStatus::DependencyFailed);
+    actor.test_inject_at("c", "x86_64-linux", DerivationStatus::Completed);
+    actor.test_inject_at("r", "x86_64-linux", DerivationStatus::Running);
+
+    let snap = actor.compute_spawn_intents(&SpawnIntentsRequest::default());
+    assert_eq!(
+        snap.pending_by_system.get("x86_64-linux").copied(),
+        Some(2),
+        "only the Queued subset counted — terminal/Running statuses \
+         hit the catch-all continue arm"
     );
 }
 

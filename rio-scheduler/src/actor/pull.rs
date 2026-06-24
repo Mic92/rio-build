@@ -495,6 +495,28 @@ impl AnswerLogLimiter {
 static GONE_ANSWER_LOG: AnswerLogLimiter = AnswerLogLimiter::new();
 static NYR_ANSWER_LOG: AnswerLogLimiter = AnswerLogLimiter::new();
 
+/// Pull-phase wrapper over [`super::record_phase`]
+/// (idle-gap-architecture §9.1). NO per-phase `debug!` line:
+/// PullAssignment runs at fleet-claim rate (live_061: ~260/s), and a
+/// per-phase debug line is exactly the R5 log-flood class
+/// [`AnswerLogLimiter`] bounds — the histogram carries the signal.
+fn record_pull_phase(phase: &'static str, t: &mut std::time::Instant) {
+    super::record_phase("rio_scheduler_pull_phase_seconds", phase, t);
+}
+
+/// `PullDecision` → static label. Exhaustive: a new kernel admission
+/// forces a label here.
+fn decision_label(d: &PullDecision) -> &'static str {
+    match d {
+        PullDecision::RejectToken => "reject_token",
+        PullDecision::RejectStaleGeneration => "reject_stale_generation",
+        PullDecision::Gone => "gone",
+        PullDecision::NotYetReady => "not_yet_ready",
+        PullDecision::DeliverExisting { .. } => "deliver_existing",
+        PullDecision::DeliverNew => "deliver_new",
+    }
+}
+
 pub(crate) fn admit_pull(inputs: &PullInputs<'_>) -> PullDecision {
     rio_evidence_kernel::pull::admit_pull(
         rio_evidence_kernel::pull::PullRequest {
@@ -618,6 +640,7 @@ impl DagActor {
         confirm_only: bool,
         executor_token_sha256: Option<&str>,
     ) -> Result<PullOutcome, PullRejection> {
+        let mut t_phase = std::time::Instant::now();
         // merged_bug_145 fail-closed hoist (found by automated review
         // of the chain): token ABSENCE is decided exactly ONCE, here —
         // below this point the fence logic consumes a typed lane with
@@ -787,6 +810,13 @@ impl DagActor {
             decision
         };
 
+        metrics::counter!(
+            "rio_scheduler_pull_decision_total",
+            "decision" => decision_label(&decision),
+        )
+        .increment(1);
+        record_pull_phase("admit", &mut t_phase);
+
         // r[impl sched.executor.confirm-fence]
         // merged_bug_145 + merged_bug_011: the confirm-exit fence's
         // WRITE-AHEAD half, now TOTAL over the kernel's
@@ -835,11 +865,12 @@ impl DagActor {
                             .await
                             .expect("test interloper claim");
                     }
-                    match self
+                    let fence_res = self
                         .db
                         .insert_confirm_fence(hash, intent_id, serving_generation)
-                        .await
-                    {
+                        .await;
+                    record_pull_phase("fence_write", &mut t_phase);
+                    match fence_res {
                         Ok(crate::db::confirm_fences::ConfirmFenceWrite::Durable(witness)) => {
                             Some(witness)
                         }
@@ -974,6 +1005,7 @@ impl DagActor {
                     .ok_or_else(|| {
                         PullRejection::Internal("derivation vanished during re-pull".into())
                     })?;
+                record_pull_phase("build_proto", &mut t_phase);
                 Ok(PullOutcome::Deliver(Box::new(assignment)))
             }
             PullDecision::DeliverNew => {
@@ -995,7 +1027,9 @@ impl DagActor {
                     // design (which ANSWERS are fenced, not reads) —
                     // the row it observes has transitively fenced
                     // provenance (only a fenced write creates one).
-                    match self.db.confirm_fence_exists(hash).await {
+                    let read = self.db.confirm_fence_exists(hash).await;
+                    record_pull_phase("fence_read", &mut t_phase);
+                    match read {
                         Ok(Some(witness)) => {
                             info!(intent_id = %intent_id,
                                   "DeliverNew screened to Gone: executor token is confirm-fenced");
@@ -1017,6 +1051,7 @@ impl DagActor {
                     serving_generation,
                     kind,
                     claim_nonce,
+                    &mut t_phase,
                 )
                 .await
             }
@@ -1036,6 +1071,7 @@ impl DagActor {
         serving_generation: crate::db::ServingGeneration,
         kind: rio_evidence_kernel::pull::PullKind,
         claim_nonce: Option<Uuid>,
+        t_phase: &mut std::time::Instant,
     ) -> Result<PullOutcome, PullRejection> {
         let Some(db_id) = self.dag.node(drv_hash).and_then(|s| s.db_id) else {
             // Merged but not yet persisted — deliverable on a later
@@ -1152,7 +1188,13 @@ impl DagActor {
                 retry_after_secs: NOT_YET_READY_RETRY_AFTER_SECS,
             });
         }
-        let minted = self
+        record_pull_phase("solve", t_phase);
+        // Record-before-match (same shape as fence_write/fence_read/
+        // pin_inputs): a PG brownout is exactly what `phase=mint` is
+        // positioned to surface — `?`-after-record would drop the
+        // error-path latency from the histogram and leave the
+        // `actor_cmd_seconds{cmd=PullAssignment}` spike undecomposable.
+        let mint_res = self
             .db
             .mint_pull_attempt_fenced(
                 db_id,
@@ -1168,7 +1210,9 @@ impl DagActor {
                 // build pulls and nonceless (old-store) claims.
                 claim_nonce,
             )
-            .await
+            .await;
+        record_pull_phase("mint", t_phase);
+        let minted = mint_res
             .map_err(|e| PullRejection::Internal(format!("pull mint transaction failed: {e}")))?;
         if !minted.settled() {
             info!(
@@ -1283,6 +1327,7 @@ impl DagActor {
             .unwrap_or(DerivationStatus::Running);
         self.persist_status(drv_hash, new_status, Some(pulling_identity))
             .await;
+        record_pull_phase("persist_status", t_phase);
 
         // GC live-input pins — same best-effort discipline as the
         // stream path's record phase. Materialization mints skip this:
@@ -1291,11 +1336,18 @@ impl DagActor {
         // attempt never reads build inputs).
         if profile.pin_live_inputs {
             let input_paths = crate::assignment::approx_input_closure(&self.dag, drv_hash);
-            if !input_paths.is_empty()
-                && let Err(e) = self.db.pin_live_inputs(drv_hash, &input_paths).await
-            {
-                debug!(drv_hash = %drv_hash, error = %e,
-                       "failed to pin live inputs for pull attempt (best-effort)");
+            record_pull_phase("input_closure", t_phase);
+            // `pin_inputs` is recorded only when the PG await ran —
+            // the help text classifies it PG-awaiting and says
+            // "Untaken branches are not recorded"; a near-zero
+            // no-DB-call sample for empty input_paths bimodally
+            // dilutes the histogram.
+            if !input_paths.is_empty() {
+                if let Err(e) = self.db.pin_live_inputs(drv_hash, &input_paths).await {
+                    debug!(drv_hash = %drv_hash, error = %e,
+                           "failed to pin live inputs for pull attempt (best-effort)");
+                }
+                record_pull_phase("pin_inputs", t_phase);
             }
         }
 
@@ -1305,6 +1357,7 @@ impl DagActor {
             .ok_or_else(|| {
                 PullRejection::Internal("derivation vanished while building the payload".into())
             })?;
+        record_pull_phase("build_proto", t_phase);
         // Display events, per work class: build mints emit STARTED (the
         // as-built path, byte-identical); materialization mints emit
         // SUBSTITUTING (BC-4 — the wire-retained kind whose emission

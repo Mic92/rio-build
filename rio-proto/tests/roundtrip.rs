@@ -87,6 +87,9 @@ fn spawn_intents_proto_roundtrip() {
         // field-number collision between the two maps cannot decode
         // cleanly.
         forecast_by_system: [("aarch64-linux".into(), 2)].into(),
+        // ctrl.nodeclaim.backlog-floor: distinct count so a field-number
+        // collision between the three u64 maps cannot decode cleanly.
+        pending_by_system: [("x86_64-linux".into(), 543)].into(),
         ice_masked_cells: vec!["mid:spot".into()],
         // Round-9 B3: the truncation-honesty flag roundtrips (true is
         // the non-default value, so the wire actually carries it).

@@ -683,10 +683,12 @@ message GetSpawnIntentsRequest {
   // (the proto3 default, and what every pre-window client sends) =
   // unbounded, the pre-window behavior — read-side-first evolution,
   // no bridge. The bound is on the CONSUMER's slice, never the mint
-  // (A-2: the demand record is the demand truth — `queued_by_system`
-  // and `ice_masked_cells` stay full-population aggregates regardless
-  // of the window). `SPAWN_INTENTS_DEFAULT_PAGE` (rio-proto src) is
-  // the cited consumer default.
+  // (A-2: the demand record is the demand truth — `queued_by_system`,
+  // `pending_by_system`, and `ice_masked_cells` stay full-population
+  // aggregates regardless of the window; `forecast_by_system` is
+  // window-proof but post-view-filter — see field 6 / merged_bug_068).
+  // `SPAWN_INTENTS_DEFAULT_PAGE` (rio-proto src) is the cited
+  // consumer default.
   uint32 limit = 5;
 }
 
@@ -737,6 +739,18 @@ message GetSpawnIntentsResponse {
   // semantics, which is also true there (their forecast intents were
   // never counted; consumers keep the ready-only bound they had).
   map<string, uint64> forecast_by_system = 6;
+  // Backlog warm-floor signal (ctrl.nodeclaim.backlog-floor):
+  // per-system count of derivations with `status==Queued` — the FULL
+  // DAG-depth backlog, NOT the §13b 1-layer forecast frontier (field
+  // 6) and NOT the Ready class (field 2). Full-population, pre-filter,
+  // window-proof: accumulated in the same `dag.iter_nodes()` pass as
+  // `queued_by_system`, so coherent snapshot with `intents` (one DAG
+  // state). Includes substitution-pending nodes that may never build;
+  // the consumer's `min(pending, live_registered)` cap absorbs that
+  // over-count. Consumer: `nodeclaim_pool::reap_idle` warm-floor.
+  // Additive, read-side-first (Q6): old servers never set it; absent
+  // reads as an empty map → floor=0 → pre-floor reap semantics.
+  map<string, uint64> pending_by_system = 7;
 }
 
 // Controller → scheduler ack: "I created Jobs for these intents".

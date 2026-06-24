@@ -47,6 +47,18 @@ pub fn metal_partition_op(node_class: &str) -> &'static str {
 /// fails the subset check). See `r[sched.sla.fod-feature-derivation]`.
 pub const FETCHER_FEATURE: &str = "fetcher";
 
+/// `provides_features ∋ FETCHER_FEATURE` — the fetcher-partition
+/// predicate. Single body so the warm-floor's `arch_admits` exclusion
+/// (`node_informer::is_fetcher_class`) and the NodeClaim role-stamp /
+/// taint derivation (`cover.rs`) cannot diverge when the predicate
+/// next tightens (second sentinel feature, or the §Partition taint-map
+/// generalisation). Free fn over `&[String]`: the two callers carry
+/// different hw-class types.
+#[inline]
+pub fn provides_fetcher(features: &[String]) -> bool {
+    features.iter().any(|f| f == FETCHER_FEATURE)
+}
+
 /// The fetcher node taint AND label key (one key for both, mirroring the
 /// metal pattern: `rio.build/kvm` is both `metal-*`'s taint key and label
 /// key). Pre-§13e the static `rio-fetcher` NodePool used a separate

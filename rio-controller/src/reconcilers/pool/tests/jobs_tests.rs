@@ -5012,6 +5012,7 @@ fn w10_af_forecast_backed_job_survives_truncated_bound() {
         intents: vec![intent_named("on-page-r"), intent_named("on-page-f")],
         queued_by_system: [("x86_64-linux".to_string(), 3u64)].into(),
         forecast_by_system: [("x86_64-linux".to_string(), 2u64)].into(),
+        pending_by_system: Default::default(),
         ice_masked_cells: vec![],
         truncated: true,
     };
@@ -5075,6 +5076,7 @@ fn w10_af_all_forecast_page_keeps_reap_bounded() {
         intents: vec![intent_named("fc-a")],
         queued_by_system: [].into(),
         forecast_by_system: [("x86_64-linux".to_string(), 4u64)].into(),
+        pending_by_system: Default::default(),
         ice_masked_cells: vec![],
         truncated: true,
     };

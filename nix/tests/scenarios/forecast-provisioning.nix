@@ -28,6 +28,14 @@
   pkgs,
   common,
   fixture,
+  # Registration-wait budgets. THREADED FROM default.nix so the
+  # eval-time `2×leadTimeSeed > ownedWait+regWait+10` dominance assert
+  # there fails BUILD (not flakes) when these are widened — the prior
+  # re-stated literals went stale at 60→120 exactly because the
+  # default.nix budget was a comment, not a structural coupling. Same
+  # discipline as backlog-floor.nix's `regWaitSecs`.
+  ownedWaitSecs,
+  regWaitSecs,
 }:
 let
   inherit (fixture) ns nsBuilders;
@@ -124,8 +132,11 @@ pkgs.testers.runNixOSTest {
 
     def stage_machinery_live():
         # Apply the canary and give the Stage 15s to set Launched=True.
-        # The canary is deleted on every path so it can never leak into
-        # the real test's nodeclaim listings.
+        # The canary is best-effort-deleted on every path; it carries
+        # no labels, so a leak (transient apiserver error during the
+        # finally) is invisible to every label-filtered nodeclaim
+        # assertion below — but a future UNFILTERED `wc -l` would see
+        # it (so do not add one).
         try:
             k3s_server.succeed(
                 "k3s kubectl apply -f - <<'EOF'\n" + canary + "\nEOF"
@@ -140,7 +151,12 @@ pkgs.testers.runNixOSTest {
         except Exception:
             return False
         finally:
-            k3s_server.succeed(
+            # execute(), not succeed(): a non-zero exit here would
+            # raise out of finally, supersede the except-block's
+            # `return False`, and escape the retry loop uncaught. The
+            # trade-off (cleanup is best-effort, not enforced) is
+            # accepted — see the unlabeled-canary note above.
+            k3s_server.execute(
                 "k3s kubectl delete nodeclaims canary-stage-liveness "
                 "--ignore-not-found"
             )
@@ -168,6 +184,20 @@ pkgs.testers.runNixOSTest {
             "--timeout=60s",
             timeout=90,
         )
+    # The in-loop finally uses execute() (best-effort — succeed() there
+    # would supersede `return False` and escape the retry); re-assert
+    # cleanup ONCE here with succeed() now that Stage liveness is
+    # confirmed, so the "every downstream count is label-filtered"
+    # invariant the comment above concedes is no longer a load-bearing
+    # assumption. SUCCESS-PATH ONLY: the all-3-fail `raise` exits
+    # before this line, so on that path the in-loop best-effort
+    # execute() is the final cleanup attempt (accepted — the test has
+    # already failed; the on-failure dump lists Stages, not nodeclaims).
+    # --ignore-not-found: the in-loop delete almost always already
+    # landed.
+    k3s_server.succeed(
+        "k3s kubectl delete nodeclaims canary-stage-liveness --ignore-not-found"
+    )
 
     # ── submit a build → scheduler emits SpawnIntents ────────────────
     # 4-leaf fanout: enough to produce ≥1 unplaced intent (zero
@@ -190,7 +220,7 @@ pkgs.testers.runNixOSTest {
         k3s_server.wait_until_succeeds(
             "test $(k3s kubectl get nodeclaims "
             "-l rio.build/nodeclaim-pool=builder -o name | wc -l) -ge 1",
-            timeout=90,
+            timeout=${toString ownedWaitSecs},
         )
     except Exception:
         print("=== nodeclaim_pool failed to create NodeClaim ===")
@@ -214,17 +244,18 @@ pkgs.testers.runNixOSTest {
     # logs — KWOK swallows gojq selector / template errors at info
     # level, so a regressed Stage rule looks like silence otherwise.
     #
-    # 120s budget — composed-tree contention tail. 5s nominal (the
-    # KWOK Stage delays) + reconcile ticks; 60s held calm but timed
-    # out at 60.29s under the bw13 composed-tree gate (18+ concurrent
-    # VM builds; the KWOK controller restart above adds a discovery
-    # round-trip). Setup precondition, not a property under test.
+    # ${toString regWaitSecs}s budget — composed-tree contention tail.
+    # 5s nominal (the KWOK Stage delays) + reconcile ticks; 60s held
+    # calm but timed out at 60.29s under the bw13 composed-tree gate
+    # (18+ concurrent VM builds; the KWOK controller restart above adds
+    # a discovery round-trip). Setup precondition, not a property under
+    # test.
     try:
         k3s_server.wait_until_succeeds(
             "k3s kubectl get nodeclaims -l rio.build/nodeclaim-pool=builder "
             "-o jsonpath='{.items[*].status.conditions[?(@.type==\"Registered\")].status}' "
             "| grep -q True",
-            timeout=120,
+            timeout=${toString regWaitSecs},
         )
     except Exception:
         print("=== NodeClaim never Registered — kwok Stage rule did not fire ===")

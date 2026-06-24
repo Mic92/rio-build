@@ -74,6 +74,7 @@ mod tenants;
 
 pub use gc::spawn_store_size_refresh;
 pub use sla::duration_fit_from_status;
+pub(crate) use spawn_intents::zero_pending_by_system_gauge;
 
 pub struct AdminServiceImpl {
     pool: PgPool,
@@ -785,7 +786,12 @@ impl AdminService for AdminServiceImpl {
         )?;
         self.ensure_leader()?;
         self.check_actor_alive()?;
-        let resp = spawn_intents::get_spawn_intents(&self.actor, request.into_inner()).await?;
+        let resp = spawn_intents::get_spawn_intents(
+            &self.actor,
+            &self.leader.is_leader_arc(),
+            request.into_inner(),
+        )
+        .await?;
         Ok(Response::new(resp))
     }
 
@@ -1028,12 +1034,16 @@ impl AdminService for AdminServiceImpl {
                         node_class: def.node_class.clone(),
                         // §13c-2 r[impl scheduler.sla.ceiling.controller-mirror]:
                         // ship `min(catalog, cfg)` with each falling to
-                        // global. Wire stays nonzero (`validate()` rejects
-                        // global=0 and `Some(0)` overrides; the catalog
-                        // cores axis floors at 1 via `derive_ceilings`'
-                        // `.max(1)`, mem is a real instance type's
-                        // memory); the controller's `ceilings_for`
-                        // `>0` filter survives.
+                        // global. Wire is nonzero for every CATALOGUED
+                        // class (`validate()` rejects global=0 and
+                        // `Some(0)` overrides; `derive_ceilings`' cores
+                        // axis floors at 1 via `.max(1)`). A class whose
+                        // requirements matched ZERO catalog entries ships
+                        // (0,0) — the controller's `ceilings_for` `>0`
+                        // filter then falls to global, which is wrong
+                        // (live_101). The `SYNTHESIZED_LABELS` allowlist
+                        // in `validate_shape` makes that a config-load
+                        // error instead of a wire-0.
                         max_cores: self.sla_config.class_ceilings(h, &catalog, global).0,
                         max_mem: self.sla_config.class_ceilings(h, &catalog, global).1,
                         taints,

@@ -221,13 +221,17 @@ pub fn classify(
         // Already terminating: a redundant `delete` is accepted by the
         // apiserver (not 404 — the object still exists), so it'd
         // double-increment `reaped_total` and re-ICE-mask the cell.
+        // reglive-exempt: gates every emission (Dead/Ice/BootTimeout)
         if n.terminating() {
             continue;
         }
-        // Dead-node signal (OA2 wedge clustering): keyed on the
-        // backing Node name (the attempt rows' source attribution),
-        // not the NodeClaim name.
-        if n.registered
+        // Dead-node signal (OA2 wedge clustering): keyed on the backing
+        // Node name (the attempt rows' source attribution), not the
+        // NodeClaim name. Routes through [`LiveNode::is_registered_live`]
+        // so the Dead-emission population matches the `dead_reap_cap`
+        // denominator (reap_unhealthy l.~1049) — when the predicate
+        // tightens, the cap and the population it bounds shrink together.
+        if n.is_registered_live()
             && n.node_name
                 .as_deref()
                 .is_some_and(|nn| dead_nodes.contains(nn))
@@ -235,7 +239,7 @@ pub fn classify(
             out.push((i, ReapReason::Dead));
             continue;
         }
-        if n.registered {
+        if n.is_registered_live() {
             continue;
         }
         // Terminal launch-failure reason → ICE NOW (no timeout wait).
@@ -408,6 +412,7 @@ pub fn detect_vanished(
     for (name, e) in inflight.iter_mut() {
         e.ever_registered |= live_by_name
             .get(name.as_str())
+            // reglive-exempt: one-way latch — terminating irrelevant
             .is_some_and(|n| n.registered);
     }
     let mut ice = Vec::new();
@@ -633,6 +638,7 @@ pub fn classify_vanish(
         // confirmed — regardless of registered/Launched (the original
         // classification already adjudicated those).
         (None, Some(r)) => Some(VanishClass::SelfReap(r)),
+        // reglive-exempt: VanishClass arms — combinatorial classification
         (Some(n), Some(r)) if n.terminating() => Some(VanishClass::SelfReap(r)),
         // Observation rows (tombstone absent, not yet consultable
         // under the freshness gate, or present but DISCONFIRMED —
@@ -641,8 +647,11 @@ pub fn classify_vanish(
         // evidence-so-far, never proof of non-commit, which is why
         // these exits' tombstone discharge is HandedToSweep, never
         // consumption — merged_bug_050).
+        // reglive-exempt: VanishClass arms — combinatorial classification
         (Some(n), _) if n.registered && n.terminating() => Some(VanishClass::DeliberateTeardown),
+        // reglive-exempt: VanishClass arms — combinatorial classification
         (Some(n), _) if n.registered => Some(VanishClass::RegisteredHandoff),
+        // reglive-exempt: VanishClass arms — combinatorial classification
         (Some(n), _) if n.terminating() => match n.launched() {
             Some(true) => Some(VanishClass::BootFailureTeardown),
             _ => Some(VanishClass::LaunchFailureTeardown),
@@ -920,6 +929,7 @@ pub fn sweep_registered_tombstones(
         }
         let confirmed = match live_by_name.get(name.as_str()) {
             None => true,
+            // reglive-exempt: tombstone confirm — delete observed, not capacity
             Some(n) if n.terminating() => true,
             Some(_) => false,
         };
@@ -1045,11 +1055,8 @@ pub async fn reap_unhealthy(
     let to_reap = classify(live, &dead, sketches, cfg, now_secs);
     // Cap the dead-reap rate against the population it can actually reap
     // from — `classify` only emits `ReapReason::Dead` for
-    // `registered && !terminating()`. See `dead_reap_cap` doc.
-    let registered_count = live
-        .iter()
-        .filter(|n| n.registered && !n.terminating())
-        .count();
+    // `is_registered_live()`. See `dead_reap_cap` doc.
+    let registered_count = live.iter().filter(|n| n.is_registered_live()).count();
     let cap = dead_reap_cap(registered_count);
     let mut dead_reaped = 0usize;
     let mut out = ReapOutcome::default();
@@ -2226,10 +2233,7 @@ mod tests {
             )));
         }
         // The exact filter expression `reap_unhealthy` feeds `dead_reap_cap`.
-        let registered_count = live
-            .iter()
-            .filter(|n| n.registered && !n.terminating())
-            .count();
+        let registered_count = live.iter().filter(|n| n.is_registered_live()).count();
         assert_eq!(registered_count, 5);
         assert_eq!(
             dead_reap_cap(registered_count),

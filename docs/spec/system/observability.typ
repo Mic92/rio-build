@@ -355,6 +355,20 @@ the only thing standing between these builds and progress" --- the design
 §2.5 park-visibility obligation (PD-20). The corresponding alert lives in
 the helm chart's PrometheusRule.
 
+#r("obs.metric.spawn-intents-pending")[
+  #(refs.metric)("rio_scheduler_spawn_intents_pending_by_system") (gauge, `system`)
+  reports the full-population `status==Queued` derivation count per
+  system --- the `pending_by_system` aggregate shipped on
+  `GetSpawnIntentsResponse` (#rref("ctrl.nodeclaim.backlog-floor")).
+]
+
+#r("obs.metric.pull-phase")[
+  #(refs.metric)("rio_scheduler_pull_phase_seconds") (histogram, `phase`) decomposes the
+  `actor_cmd_seconds{cmd="PullAssignment"}` envelope into per-phase
+  timings; #(refs.metric)("rio_scheduler_pull_decision_total") (counter, `decision`)
+  records post-screen kernel admission outcomes (NOT wire outcome).
+]
+
 == Store Metrics
 
 #r("obs.metric.store+2")[
@@ -431,6 +445,17 @@ frozen with the CR gone.
   builders), the policy floor is a hard bound the model cannot exceed
   regardless of arrival rate; the model NA-extends past the floor only for
   cells packing \~1 intent per node. See `consolidate_after()`.
+]
+
+#r("obs.metric.backlog-floor")[
+  #(refs.metric)("rio_controller_nodeclaim_warm_floor") (gauge, `cell`) reports the
+  post-cap per-cell warm-floor node count
+  (#rref("ctrl.nodeclaim.backlog-floor"));
+  #(refs.metric)("rio_controller_nodeclaim_backlog_pending") (gauge, `cell`) reports the
+  pre-cap `pending_for_cell` value the floor derives from;
+  #(refs.metric)("rio_controller_nodeclaim_reap_suppressed_total") (counter,
+  `cell`/`reason`) increments per idle-reap skipped because the cell was
+  at its floor.
 ]
 
 #r("obs.metric.controller+2")[

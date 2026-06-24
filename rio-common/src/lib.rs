@@ -59,6 +59,26 @@ pub fn default_addr(port: u16) -> std::net::SocketAddr {
     (std::net::Ipv6Addr::UNSPECIFIED, port).into()
 }
 
+/// `*m.entry(k).or_insert(0) += 1` without the Occupied-path clone.
+/// `Entry::entry(K)` takes `K` by value, so a borrowed key must be
+/// cloned even when the entry exists — which is the dominant case for
+/// a low-cardinality key under a high-cardinality loop (the
+/// scheduler's per-DAG-node `pending_by_system` accumulator: ~5
+/// distinct systems, |backlog| iterations; the controller's per-live-
+/// node `remaining` map: ~24 cells, |live| iterations). The
+/// `get_mut`/`insert` split clones only on the Vacant path.
+pub fn bump_count<K>(m: &mut std::collections::HashMap<K, u64>, k: &K)
+where
+    K: Clone + std::cmp::Eq + std::hash::Hash,
+{
+    match m.get_mut(k) {
+        Some(n) => *n += 1,
+        None => {
+            m.insert(k.clone(), 1);
+        }
+    }
+}
+
 /// Convert a byte/count budget (`u64`, the config-surface type) into a
 /// tokio semaphore permit count, saturating at BOTH boundaries:
 /// `usize` on 32-bit targets and [`tokio::sync::Semaphore::MAX_PERMITS`]

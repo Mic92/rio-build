@@ -50,6 +50,7 @@
     "rio_controller_lease_lost_total",
     "rio_controller_lease_rebound_total",
     "rio_controller_node_wedge_marked_total",
+    "rio_controller_nodeclaim_backlog_pending",
     "rio_controller_nodeclaim_budget_starved_total",
     "rio_controller_nodeclaim_cells_decode_refused_total",
     "rio_controller_nodeclaim_consolidate_threshold_seconds",
@@ -63,10 +64,12 @@
     "rio_controller_nodeclaim_lead_time_seconds",
     "rio_controller_nodeclaim_live",
     "rio_controller_nodeclaim_mask_refused_total",
+    "rio_controller_nodeclaim_reap_suppressed_total",
     "rio_controller_nodeclaim_reaped_total",
     "rio_controller_nodeclaim_terminating_age_max_seconds",
     "rio_controller_nodeclaim_tick_duration_seconds",
     "rio_controller_nodeclaim_tombstone_expired_total",
+    "rio_controller_nodeclaim_warm_floor",
     "rio_controller_orphan_jobs_reaped_total",
     "rio_controller_pod_evictions_total",
     "rio_controller_reap_dispositions_total",
@@ -173,8 +176,10 @@
     "rio_scheduler_open_materialization_attempts",
     "rio_scheduler_orphan_builds_cancelled_total",
     "rio_scheduler_poison_fleet_exhausted_total",
+    "rio_scheduler_pull_decision_total",
     "rio_scheduler_pull_establishments_total",
     "rio_scheduler_pull_outcome_flush_batch_size",
+    "rio_scheduler_pull_phase_seconds",
     "rio_scheduler_pull_rejected_total",
     "rio_scheduler_queue_backpressure",
     "rio_scheduler_recovery_duration_seconds",
@@ -202,6 +207,7 @@
     "rio_scheduler_sla_refresh_age_seconds",
     "rio_scheduler_sla_residual_multimodal_total",
     "rio_scheduler_sla_suspicious_scaling_total",
+    "rio_scheduler_spawn_intents_pending_by_system",
     "rio_scheduler_spawn_intents_per_response",
     "rio_scheduler_spawn_intents_response_bytes",
     "rio_scheduler_stale_completed_reset_total",
@@ -577,6 +583,11 @@
         "help": "Nodes newly marked Dead-equivalent by the controller-side OA2 clustering: ≥2 distinct derivations' open pull-mode attempts expired (age past intent deadline + grace) on one node inside the 30-minute window. One increment per not-wedged→wedged transition; the resulting NodeClaim deletions are counted in nodeclaim_reaped_total{reason=\"dead\"} subject to the per-tick dead-reap cap. Non-zero = a node is eating builds without reporting (the wedged-but-Ready failure mode); see the hung-node runbook."
       },
       {
+        "name": "rio_controller_nodeclaim_backlog_pending",
+        "kind": "gauge",
+        "help": "Per-cell pre-cap backlog signal: Σ pending_by_system over systems this cell arch-admits. The warm_floor input BEFORE the min(live × cap_ratio) cap — observable at cap_ratio=0.0 for read-only rollout verification."
+      },
+      {
         "name": "rio_controller_nodeclaim_budget_starved_total",
         "kind": "counter",
         "help": "Cover-sizing ticks where NO claim size was affordable for a demanded cell — the per-class fleet-core budget binds below the smallest family member (budget < the largest single-intent footprint). Distinct from intent_dropped_total: nothing is dropped, the deficit persists and re-fires every tick until budget frees or demand drains. A sustained rate = raise maxFleetCores / the class cap, or drain the cell."
@@ -642,6 +653,11 @@
         "help": "ICE-mask entries refused at the cover-deficit decode seam by `reason` (undecodable | epoch_suffixed); each refusal leaves its cell unmaskable — non-zero means cell-codec skew between scheduler and controller (version drift): cover may re-mint into a cell the scheduler just ICE'd until the skew is fixed."
       },
       {
+        "name": "rio_controller_nodeclaim_reap_suppressed_total",
+        "kind": "counter",
+        "help": "Idle-reaps skipped, per tick per node, because the cell was at its backlog warm-floor (reason=backlog_floor). A 28-node fleet held through a 33-tick bottleneck increments ~924, not 28 — rate semantics, query with increase()."
+      },
+      {
         "name": "rio_controller_nodeclaim_reaped_total",
         "kind": "counter",
         "help": "nodeclaim_pool NodeClaim deletions by `reason` × `cell`. reason=idle: NA-consolidate break-even; reason=ice: Launched=False (timeout or terminal LaunchFailed reason; incl. this controller's own ICE delete confirmed one tick late after an ambiguous delete error); reason=boot-timeout: Launched=True ∧ Registered=False — the controller's timeout reap, an external teardown before registration (e.g. Karpenter registration TTL), or the controller's own boot-timeout delete confirmed late (capacity existed; never ICE-masks); reason=dead: hung node — the controller-side OA2 per-node deadline-expiry clustering over the open-attempt view; reason=vanished: in-flight claim Karpenter-GC'd or torn down between ticks WITHOUT launch evidence and WITHOUT this controller's own delete provenance (counts as ICE evidence). Confirmed-late entries (any reason) are the tombstone consumers: the vanish fold for in-flight claims, the registered-tombstone sweep for Dead/Idle ones — every ambiguous delete either lands here under its original reason or surfaces in nodeclaim_tombstone_expired_total, never neither."
@@ -660,6 +676,11 @@
         "name": "rio_controller_nodeclaim_tombstone_expired_total",
         "kind": "counter",
         "help": "Ambiguous-delete tombstones dropped UNCONFIRMED after the provenance TTL, by original reap `reason` — the typed expiry disposition of the delete-outcome law (an expiring entry's claim was observed alive, i.e. the errored delete provably had not committed, or was never re-observed). Sustained rate > 0 alongside apiserver delete errors = deletes erring without committing (retry loop working as designed); non-zero WITHOUT a matching reap-retry pattern = a tombstone consumer gap — see ctrl.pool.delete-outcome."
+      },
+      {
+        "name": "rio_controller_nodeclaim_warm_floor",
+        "kind": "gauge",
+        "help": "Per-cell backlog-derived node-count floor for idle-reap (ctrl.nodeclaim.backlog-floor). reap_idle will not delete below this. min(pending_for_cell, ⌈registered × backlog_floor_cap_ratio⌉), or 0 when pending_by_system is stale/empty. Zero-written for every gauge_universe cell."
       },
       {
         "name": "rio_controller_orphan_jobs_reaped_total",
@@ -1211,6 +1232,11 @@
         "help": "Derivations poisoned because failed_builders excluded every registered worker of the matching kind (I-065). Nonzero rate with small fleet = poison threshold unreachable; the build would otherwise defer forever."
       },
       {
+        "name": "rio_scheduler_pull_decision_total",
+        "kind": "counter",
+        "help": "Post-screen admit_pull decisions per PullAssignment turn (labeled by decision: deliver_new | deliver_existing | not_yet_ready | gone | reject_token | reject_stale_generation). Counted AFTER the confirm-only and degraded-term screens — the post-screen kernel admission, NOT the wire outcome (DeliverNew can still bail to NotYetReady/ StaleGeneration at the mint fence / excluded-node backstop / transition reject). pull_rejected_total below counts the credential layer (pre-actor); this counts the kernel layer (in-actor)."
+      },
+      {
         "name": "rio_scheduler_pull_establishments_total",
         "kind": "counter",
         "help": "Open pull-mode attempts established as unreported executor crashes by the establishment sweep (the C2 charge arm; the store-probe adopt arm does not count, and the probe-unavailable DEFER arm has its own counter — establish_deferred_total). Feeds the OA2 interim hung-node tripwire — the attempt_requeue histogram's establishment cause is shared with the stream-mode correlation-TTL sweep and is unsuitable for that alert."
@@ -1219,6 +1245,11 @@
         "name": "rio_scheduler_pull_outcome_flush_batch_size",
         "kind": "histogram",
         "help": "Count of ReportPullOutcome commands drained per flush_pending_pull_outcomes pass (sh-027 §3: the prod N̄ signal — design target ≥20; the retired mailbox-empty trigger measured N̄≈5.5). The sh-007c S6 O(1)-PG-per-flush amortization scales with this; a sustained le=5 mass means the 250ms deadline window is not coalescing."
+      },
+      {
+        "name": "rio_scheduler_pull_phase_seconds",
+        "kind": "histogram",
+        "help": "Per-phase PullAssignment latency (labeled by phase: admit | fence_write | fence_read | solve | mint | persist_status | input_closure | pin_inputs | build_proto). Decomposes rio_scheduler_actor_cmd_seconds{cmd=PullAssignment}: the idle-gap §9.1 12.5→23.9 ms shift was workload, not code — closure size drives input_closure + pin_inputs. mint / pin_inputs / fence_* are PG-awaiting; admit / solve / input_closure are in-memory. Untaken branches are not recorded: Reject*/Gone/NotYetReady record admit (+ fence_write on keyed Gone/NotYetReady) only; DeliverExisting records admit + build_proto (build_proto's baseline includes the post-admit obligation match — sub-µs, no .await, below bucket resolution); a DeliverNew DECISION can still bail to NotYetReady before solve (fence-read fail / db_id-unpersisted / excluded-source-node), so count(decision=deliver_new) >= count(phase=solve); NonKeyed DeliverNew skips fence_read (solve's baseline then includes the post-admit obligation match — sub-µs, no .await, below bucket resolution); empty-input DeliverNew skips pin_inputs; Materialization-kind DeliverNew skips input_closure/pin_inputs. Compare phases against each other, not against actor_cmd_seconds (uninstrumented residual = display-emit + reply-send)."
       },
       {
         "name": "rio_scheduler_pull_rejected_total",
@@ -1359,6 +1390,12 @@
         "name": "rio_scheduler_sla_suspicious_scaling_total",
         "kind": "counter",
         "help": "exploration froze at maxCores still saturated (labeled tenant). The build wants more cores than the cluster offers."
+      },
+      {
+        "name": "rio_scheduler_spawn_intents_pending_by_system",
+        "kind": "gauge",
+        "help": "status==Queued derivation count per system on the last GetSpawnIntents — the FULL DAG-depth backlog (backlog warm-floor signal, ctrl.nodeclaim.backlog-floor). NOT the Ready-class queued_by_system and NOT the §13b forecast frontier.",
+        "aggregation": "per-replica"
       },
       {
         "name": "rio_scheduler_spawn_intents_per_response",

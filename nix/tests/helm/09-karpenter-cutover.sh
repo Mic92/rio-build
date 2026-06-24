@@ -31,13 +31,13 @@ test "$(yq 'select(.kind=="EC2NodeClass" and .metadata.name=="rio-default")
   exit 1
 }
 
-# Dedicated EBS volumes: rio-default and rio-metal MUST map BOTH
-# /dev/xvdb (kubelet ephemeral-storage quota volume) and /dev/xvdc
-# (/var/rio — the AMI's rio-ebs-mount fails the boot on EC2 hosts when
-# it's missing, so dropping it bricks every EBS/metal build). rio-nvme
-# MUST NOT (the instance-store RAID0 hosts /var/rio there).
+# Dedicated EBS volumes: rio-default, rio-default-express and rio-metal
+# MUST map BOTH /dev/xvdb (kubelet ephemeral-storage quota volume) and
+# /dev/xvdc (/var/rio — the AMI's rio-ebs-mount fails the boot on EC2
+# hosts when it's missing, so dropping it bricks every EBS/metal build).
+# rio-nvme MUST NOT (the instance-store RAID0 hosts /var/rio there).
 # rebase-plan §Helm DUPLICATED-MECHANISMS: post-ADR-022 builder/fetcher classes carry root+xvdb(kubelet quota)+xvdc(/var/rio)
-for nc in rio-default rio-metal; do
+for nc in rio-default rio-default-express rio-metal; do
   count="$(yq "select(.kind==\"EC2NodeClass\" and .metadata.name==\"$nc\")
                | .spec.blockDeviceMappings | length" "$karp")"
   test "$count" = 3 || {

@@ -1620,6 +1620,24 @@ impl SlaConfig {
                      `labels` instead.",
                     r.key
                 );
+                // live_101: requirement keys are an allowlist. The §13c-2
+                // catalog matcher only sees the label projection
+                // `karpenter_labels()` synthesizes; a key Karpenter knows
+                // but the matcher does NOT (e.g. `instance-hypervisor`,
+                // pre-fix `instance-cpu`) evaluates `In`/`Gt`/`Lt`/`Exists`
+                // on `v=None` → false for every entry → derive_ceilings
+                // (0,0)-excludes the class at boot, silently. Refusing
+                // here turns that into a config-load error naming the
+                // missing key. Adding a key → add it to `mod label`,
+                // `SYNTHESIZED_LABELS`, and `karpenter_labels()`.
+                anyhow::ensure!(
+                    super::catalog::SYNTHESIZED_LABELS.contains(&r.key.as_str()),
+                    "sla.hwClasses[{h}].requirements key {:?} is not synthesized \
+                     by the §13c-2 catalog matcher (supported: {}); the class \
+                     would be silently EXCLUDED at boot. See catalog.rs mod label.",
+                    r.key,
+                    super::catalog::SYNTHESIZED_LABELS.join(", "),
+                );
                 // k8s NodeSelectorRequirement operator/values coherence
                 // — the structural floor under helm's render-time
                 // `fail` guard. Without this an `In []` (or `Gt
@@ -2789,6 +2807,56 @@ mod tests {
                 (None, Ok(())) => {}
                 (e, r) => panic!("({mc:?},{mm:?}): expect {e:?}, got {r:?}"),
             }
+        }
+    }
+
+    /// live_101: a requirement key the §13c-2 catalog matcher does NOT
+    /// synthesize is rejected at config load. `instance-hypervisor` is
+    /// a real Karpenter discovery label — Karpenter would honour it on
+    /// the NodeClaim — but `karpenter_labels()` doesn't model it, so
+    /// `requirements_match()` would return false for every entry and
+    /// the class would be (0,0)-excluded at boot with only a runtime
+    /// ERROR log. Pre-fix this booted cleanly (validate_shape banned
+    /// only `rio.build/*` and checked operator arity).
+    #[test]
+    fn rejects_requirement_key_the_matcher_does_not_synthesize() {
+        let mut cfg = base();
+        cfg.hw_classes
+            .get_mut("test-hw")
+            .unwrap()
+            .requirements
+            .push(NodeSelectorReq {
+                key: "karpenter.k8s.aws/instance-hypervisor".into(),
+                operator: "In".into(),
+                values: vec!["nitro".into()],
+            });
+        let err = cfg.validate_shape().unwrap_err().to_string();
+        assert!(
+            err.contains("karpenter.k8s.aws/instance-hypervisor"),
+            "{err}"
+        );
+        assert!(
+            err.contains("not synthesized by the §13c-2 catalog matcher"),
+            "{err}"
+        );
+        assert!(
+            err.contains("karpenter.k8s.aws/instance-category"),
+            "error lists supported keys: {err}"
+        );
+        // The allowlist accepts every key the SHIPPED chart uses
+        // (covered transitively by the `shipped_hw_classes` →
+        // `validate_shape().expect(...)` assertion below) and the
+        // VM-test/Static no-op `kubernetes.io/os` key (covered by
+        // `base()` itself passing — `test_default()`'s requirement).
+        let mut cfg = base();
+        for k in super::super::catalog::SYNTHESIZED_LABELS {
+            cfg.hw_classes.get_mut("test-hw").unwrap().requirements = vec![NodeSelectorReq {
+                key: (*k).into(),
+                operator: "Exists".into(),
+                values: vec![],
+            }];
+            cfg.validate_shape()
+                .unwrap_or_else(|e| panic!("allowlisted key {k} must pass: {e}"));
         }
     }
 
@@ -4422,20 +4490,32 @@ mod tests {
         );
         assert_eq!(
             edges,
-            // sh-016 (c): the g7 leaves close to mid-ebs (terminal
-            // sentinel `rungs: []` — emits zero edges); the hi-nvme-g7
-            // leaves close to hi-ebs-g7 + mid-ebs.
+            // sh-017: every hi-seeded closure spans gen 8+7+6;
+            // mid-seeded spans 7+6. hi(g8) → hi-g7(g7) → mid(g7) →
+            // lo(g6); nvme classes cross-rung to ebs at each tier;
+            // lo-ebs is the terminal sentinel (`rungs: []` — emits
+            // zero edges).
             vec![
                 "hi-ebs-arm -> hi-ebs-arm-g7",
                 "hi-ebs-arm-g7 -> mid-ebs-arm",
                 "hi-ebs-x86 -> hi-ebs-x86-g7",
                 "hi-ebs-x86-g7 -> mid-ebs-x86",
+                "hi-nvme-arm -> hi-ebs-arm",
                 "hi-nvme-arm -> hi-nvme-arm-g7",
                 "hi-nvme-arm-g7 -> hi-ebs-arm-g7",
-                "hi-nvme-arm-g7 -> mid-ebs-arm",
+                "hi-nvme-arm-g7 -> mid-nvme-arm",
+                "hi-nvme-x86 -> hi-ebs-x86",
                 "hi-nvme-x86 -> hi-nvme-x86-g7",
                 "hi-nvme-x86-g7 -> hi-ebs-x86-g7",
-                "hi-nvme-x86-g7 -> mid-ebs-x86",
+                "hi-nvme-x86-g7 -> mid-nvme-x86",
+                "lo-nvme-arm -> lo-ebs-arm",
+                "lo-nvme-x86 -> lo-ebs-x86",
+                "mid-ebs-arm -> lo-ebs-arm",
+                "mid-ebs-x86 -> lo-ebs-x86",
+                "mid-nvme-arm -> mid-ebs-arm",
+                "mid-nvme-arm -> lo-nvme-arm",
+                "mid-nvme-x86 -> mid-ebs-x86",
+                "mid-nvme-x86 -> lo-nvme-x86",
             ],
             "declared ladder edges drifted"
         );
@@ -4459,8 +4539,8 @@ mod tests {
         // 3) The closure law re-derives every declared edge: for each
         //    ladder'd parent, retain_hosting_cells(parent cells) ==
         //    the TRANSITIVE BFS over the declared `ladder.rungs` graph
-        //    (sh-016 c: g7 leaves close to mid-ebs, so the hi closure
-        //    is multi-hop). The expected closure is computed
+        //    (sh-016 c: hi-g7 closes through mid → lo, so the hi
+        //    closure is multi-hop). The expected closure is computed
         //    INDEPENDENTLY of `retain_hosting_cells`' filtering — the
         //    `(1, 0)` demand makes filtering a no-op, so this asserts
         //    membership equals the declared-graph reachability set
@@ -4807,6 +4887,7 @@ mod tests {
             // future hwClass with `Exists`/`Lt` doesn't panic the
             // control-row premise-reachability assert below.
             let mut nvme = 0;
+            let mut size_pinned = false;
             for r in &def.requirements {
                 match (r.key.as_str(), r.operator.as_str()) {
                     (label::CATEGORY, "In") => {
@@ -4822,8 +4903,33 @@ mod tests {
                     (label::LOCAL_NVME, "Gt" | "Exists" | "In") => nvme = 5700,
                     (label::LOCAL_NVME, "Lt") => nvme = 1,
                     // DoesNotExist/NotIn → nvme stays 0 (init above).
+                    (label::SIZE, "In") => size_pinned = true,
                     _ => {}
                 }
+            }
+            if size_pinned {
+                // A class with an explicit `instance-size In [...]` pin
+                // (the fetcher classes' ≤2xlarge cap) excludes every
+                // phantom shape BY ITS OWN REQUIREMENT — the
+                // unlaunchable_sizes exclusion is structurally
+                // redundant for it. Assert the pin set is disjoint
+                // from the phantom set (so a future `In [96xlarge]`
+                // doesn't pass here unnoticed) and skip the
+                // control-row census.
+                let pin: std::collections::HashSet<_> = def
+                    .requirements
+                    .iter()
+                    .filter(|r| r.key == label::SIZE && r.operator == "In")
+                    .flat_map(|r| r.values.iter().cloned())
+                    .collect();
+                for ex in &exclusions {
+                    assert!(
+                        !pin.contains(ex),
+                        "{h}: instance-size In pin {pin:?} admits the \
+                         phantom size {ex:?}"
+                    );
+                }
+                continue;
             }
             let arch = def
                 .labels

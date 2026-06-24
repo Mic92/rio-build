@@ -184,8 +184,12 @@ module "vpc" {
 }
 
 module "eks" {
-  source  = "terraform-aws-modules/eks/aws"
-  version = "~> 21.0"
+  source = "terraform-aws-modules/eks/aws"
+  # Ceiling tracks the nix-bundled aws provider (devshell.nix
+  # opentofu.withPlugins): 21.24.0 requires aws >= 6.52, nixpkgs
+  # currently ships 6.49.0. Lift to plain "~> 21.0" once the bundled
+  # provider is >= 6.52.
+  version = "~> 21.0, < 21.24"
 
   # v21 stripped the `cluster_` prefix from input variables to match the
   # underlying API (cluster_name → name, cluster_version →

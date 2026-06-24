@@ -374,6 +374,8 @@ impl Lab {
             sketches: CellSketches::default(),
             recorded_boot: HashSet::new(),
             prev_idle: HashMap::new(),
+            last_pending_by_system: HashMap::new(),
+            last_pending_at: 0.0,
             prev_extra_cells: HashSet::new(),
             prev_unplaced_extras: HashSet::new(),
             inflight_created: HashMap::new(),
@@ -1602,7 +1604,17 @@ fn err_committed_dead_reap_consequence_fires_within_finalizer_window() {
 /// observation block — idle→busy pruning with the uncensored gap,
 /// in-window Registered samples with the clear DISCARDED — and reaps
 /// idle past threshold with `placeable` empty.
+///
+/// Also the `ctrl.nodeclaim.backlog-floor` regression guard
+/// (`red_at_base=false`): the consolidate-only degraded path
+/// (scheduler unreachable → `last_pending_at` stays at its
+/// constructor 0.0) makes the staleness check `!fresh` →
+/// `warm_floor == 0` → today's reap behavior is UNCHANGED. The floor
+/// is strictly additive when no signal has ever landed; `n-idle`'s
+/// reap MUST NOT be suppressed. (Never-polled-stale → 0; the
+/// empty-map-fresh → 0 case is `warm_floor_table` row (b).)
 // r[verify ctrl.nodeclaim.consolidate-only-degraded+3]
+// r[verify ctrl.nodeclaim.backlog-floor]
 #[tokio::test]
 async fn consolidate_only_runs_kube_observations_and_reaps_with_empty_placeable() {
     let mut lab = Lab::new().await;
@@ -1633,6 +1645,14 @@ async fn consolidate_only_runs_kube_observations_and_reaps_with_empty_placeable(
     )
     .await;
 
+    assert!(
+        lab.r.last_pending_by_system.is_empty(),
+        "degraded path leaves the pending cache at its empty constructor value"
+    );
+    assert_eq!(
+        lab.r.last_pending_at, 0.0,
+        "no fresh pending_at stamp without an admin response"
+    );
     assert!(!lab.r.prev_idle.contains_key("n-busy"), "idle→busy pruned");
     let gaps = lab.idle_gaps();
     assert!(
@@ -1642,7 +1662,7 @@ async fn consolidate_only_runs_kube_observations_and_reaps_with_empty_placeable(
     );
     assert!(
         gaps.iter().any(|g| g.censored),
-        "the reap recorded its censored gap"
+        "n-idle reaped (censored gap) — empty pending → floor=0 → no suppression"
     );
     assert_eq!(lab.boot_samples(), 1, "in-window Registered edge sampled");
     assert!(lab.r.recorded_boot.contains("n-new"));
@@ -1783,6 +1803,73 @@ async fn idle_reap_ambiguous_err_tombstones_the_attempt() {
     assert!(
         !lab.idle_gaps().iter().any(|g| g.censored),
         "no censored sample before confirmation"
+    );
+}
+
+/// `ctrl.nodeclaim.backlog-floor`, same-tick over-reap: AmbiguousErr
+/// MUST decrement `remaining` (pessimistic floor accounting). Cell at
+/// remaining=2, floor=1: first DELETE → 503 (ambiguous — may have
+/// committed); the second candidate is then SUPPRESSED (the verifier
+/// scripts only the first DELETE — an unscripted second would panic).
+/// Pre-fix `remaining` stayed 2 → both deleted → registered=0 < floor.
+/// Over-hold cost: one tick (`remaining` recomputes from scratch).
+// r[verify ctrl.nodeclaim.backlog-floor]
+#[tokio::test]
+async fn idle_reap_ambiguous_err_decrements_remaining_for_floor() {
+    let mut lab = Lab::new().await;
+    lab.r.consecutive_bot_ticks = 5;
+    lab.r.admin = admin_client(dead_channel());
+    // `mid-ebs-x86` (the nc_json cell) with arch=amd64 so
+    // `arch_admits` admits x86_64-linux backlog → floor non-zero.
+    lab.r.hw_config = crate::reconcilers::node_informer::HwClassConfig::from_literals(&[(
+        "mid-ebs-x86",
+        &[(super::ARCH_LABEL, "amd64")],
+    )]);
+    let t = 1000u64;
+    // Fresh pending=1 → floor = min(1, ⌈2×1.0⌉) = 1.
+    lab.r
+        .last_pending_by_system
+        .insert("x86_64-linux".into(), 1);
+    lab.r.last_pending_at = (T0 + t) as f64;
+    for n in ["n-a", "n-b"] {
+        lab.r.prev_idle.insert(n.into(), (T0 + t - 5000) as f64);
+    }
+
+    // Order-stability: differentiate on the planned reap-order sort key
+    // (consolidate.rs TODO: `(allocatable.0 asc, idle desc)` —
+    // smallest/longest-idle reaped FIRST so the floor's survivors are
+    // largest/most-recently-busy). With n-a strictly SMALLER, the
+    // assertion that `n-a` is the first DELETE target holds under BOTH
+    // current `live` Vec order AND the planned sort — the test no
+    // longer silently encodes apiserver list order as a contract. If
+    // the sort lands with the OPPOSITE polarity (largest-first-to-
+    // reap), this test reds explicitly and the implementer updates the
+    // verifier path consciously.
+    let mut na = nc_json("n-a", 0, Some(10));
+    na["status"]["allocatable"]["cpu"] = json!("4");
+    lab.tick(
+        t,
+        consolidate_tick_scenario(
+            vec![],
+            vec![na, nc_json("n-b", 0, Some(10))],
+            vec![Scenario::k8s_error(
+                Method::DELETE,
+                "/apis/karpenter.sh/v1/nodeclaims/n-a",
+                503,
+                "ServiceUnavailable",
+                "etcd leader changed",
+            )],
+        ),
+    )
+    .await;
+
+    assert!(
+        lab.r.delete_tombstones.contains("n-a"),
+        "the ambiguous attempt is tombstoned"
+    );
+    assert!(
+        !lab.r.delete_tombstones.contains("n-b"),
+        "n-b suppressed by floor (verifier proves no second DELETE)"
     );
 }
 

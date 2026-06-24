@@ -108,6 +108,20 @@ pub(crate) struct HwClassResolved {
     pub capacity_types: Vec<String>,
 }
 
+impl HwClassResolved {
+    /// Whether this class's `kubernetes.io/arch` label equals `arch`, OR
+    /// is absent (arch-agnostic class), OR `arch` is `None` (arch-agnostic
+    /// intent). Factored from [`HwClassConfig::matches_arch`] so the
+    /// single-find composites ([`HwClassConfig::admits_intent`] /
+    /// [`HwClassConfig::admits_builder_backlog`]) read the same body.
+    fn matches_arch(&self, arch: Option<&str>) -> bool {
+        self.labels
+            .iter()
+            .find(|(k, _)| k == crate::reconcilers::nodeclaim_pool::ARCH_LABEL)
+            .is_none_or(|(_, v)| arch.is_none_or(|a| v == a))
+    }
+}
+
 impl HwClassConfig {
     /// First `$h` (lexicographic) whose every `(k, v)` is satisfied by
     /// `labels`. `None` if no conjunction matches OR config is empty
@@ -214,6 +228,32 @@ impl HwClassConfig {
             .unwrap_or_default()
     }
 
+    /// Whether `h`'s `provides_features` includes the
+    /// [`FETCHER_FEATURE`](rio_common::k8s::FETCHER_FEATURE) sentinel
+    /// — the §13e structural marker for a fetcher hw-class. Fetcher
+    /// cells receive only FOD work (`features=["fetcher"]`) via
+    /// NoSchedule taint + `features_compatible`'s bidirectional-∅
+    /// guard; a builder Queued backlog credited to one
+    /// (`consolidate::pending_for_cell`) is unbounded over-hold on a
+    /// workload class that structurally cannot receive it. Unknown `h`
+    /// / not loaded → false (conservative: builder).
+    ///
+    /// TODO: this hardcodes [`FETCHER_FEATURE`] as the sole
+    /// `arch_admits` exclusion. A second dedicated-workload class
+    /// (own NoSchedule taint + sentinel feature) accretes as
+    /// `&& !is_X_class(h)` at the prod `arch_admits` closure unless
+    /// generalised to read the §Partition-single-source taint↔feature
+    /// map ([`Self::features_routing_to_taint`] /
+    /// [`Self::taints_routing_to`]) — i.e. "h carries a NoSchedule
+    /// taint that builder Queued backlog does not tolerate" derived
+    /// from config, not enumerated here.
+    ///
+    /// [`FETCHER_FEATURE`]: rio_common::k8s::FETCHER_FEATURE
+    pub fn is_fetcher_class(&self, h: &str) -> bool {
+        self.find(h)
+            .is_some_and(|d| rio_common::k8s::provides_fetcher(&d.provides_features))
+    }
+
     /// Union of `provides_features` over hw-classes carrying a taint
     /// with key `taint_key`. §Partition-single-source (r31 bug_020):
     /// a Pool's pod must tolerate the taint iff *any* of the Pool's
@@ -305,13 +345,35 @@ impl HwClassConfig {
     /// semantics so the two ends of the placement⊇provisioning
     /// invariant cannot drift.
     pub fn matches_arch(&self, h: &str, arch: Option<&str>) -> bool {
-        let Some(d) = self.find(h) else {
-            return false;
-        };
-        d.labels
-            .iter()
-            .find(|(k, _)| k == crate::reconcilers::nodeclaim_pool::ARCH_LABEL)
-            .is_none_or(|(_, v)| arch.is_none_or(|a| v == a))
+        self.find(h).is_some_and(|d| d.matches_arch(arch))
+    }
+
+    /// `matches_arch(h, arch) ∧ features_compatible(required, provides_for(h))`
+    /// under a single `find(h)` (one `classes.read()` + linear scan).
+    /// The prod `hw_admits` body for `ffd::simulate` / `reap_idle` —
+    /// previously open-coded as `matches_arch(h,a) &&
+    /// features_compatible(f, provides_for(h))` at three callsites, paying
+    /// two read-guard+scan per call inside an `|intents|×|cells|` loop.
+    /// Unknown `h` / not loaded → false (same as [`Self::matches_arch`]).
+    pub fn admits_intent(&self, h: &str, arch: Option<&str>, required: &[String]) -> bool {
+        self.find(h).is_some_and(|d| {
+            d.matches_arch(arch)
+                && rio_common::k8s::features_compatible(required, &d.provides_features)
+        })
+    }
+
+    /// `matches_arch(h, arch) ∧ ¬is_fetcher_class(h)` under a single
+    /// `find(h)`. The prod `arch_admits` body for
+    /// `consolidate::pending_for_cell` — the warm-floor's builder-backlog
+    /// routing predicate (a fetcher cell must NOT be credited builder
+    /// Queued backlog; see [`Self::is_fetcher_class`]). Previously
+    /// open-coded at both `ReapInputs` callsites as `matches_arch &&
+    /// !is_fetcher_class`, two read-guard+scan per `(system, hw)` pair.
+    /// Unknown `h` / not loaded → false.
+    pub fn admits_builder_backlog(&self, h: &str, arch: Option<&str>) -> bool {
+        self.find(h).is_some_and(|d| {
+            d.matches_arch(arch) && !rio_common::k8s::provides_fetcher(&d.provides_features)
+        })
     }
 
     /// Replace the config wholesale from a `GetHwClassConfigResponse`.
@@ -389,13 +451,13 @@ impl HwClassConfig {
                     // series for the by-(cell) ICE alert — the cell
                     // axis is config-derived so it seeds here, on every
                     // load/refresh (absolute(0) is idempotent).
-                    crate::observability::seed_reaped_cells(self.names().into_iter().flat_map(
-                        |h| {
+                    crate::observability::seed_per_cell_reap_series(
+                        self.names().into_iter().flat_map(|h| {
                             self.capacity_types_for(&h).into_iter().map(move |c| {
                                 crate::reconcilers::nodeclaim_pool::Cell(h.clone(), c).to_string()
                             })
-                        },
-                    ));
+                        }),
+                    );
                     return;
                 }
                 Err(e) => {
@@ -3234,6 +3296,68 @@ mod tests {
         assert!(!cfg.matches_arch("nope", Some("amd64")));
         assert!(!cfg.matches_arch("nope", None));
         assert!(!HwClassConfig::default().matches_arch("x86", Some("amd64")));
+    }
+
+    /// `admits_intent`/`admits_builder_backlog` are single-find
+    /// composites of `matches_arch` ∧ `features_compatible` /
+    /// `¬provides_fetcher`. Asserts the composite agrees with the
+    /// open-coded conjunction it replaced (so the `is_some_and` rewrite
+    /// of `matches_arch` and the inlined `provides_features` read can't
+    /// silently diverge).
+    #[test]
+    fn admits_composites_agree_with_open_coded() {
+        use crate::reconcilers::nodeclaim_pool::ARCH_LABEL;
+        use rio_common::k8s::FETCHER_FEATURE;
+        let cfg = HwClassConfig::default();
+        cfg.set(
+            [
+                ("x86", "amd64", vec![]),
+                ("kvm-x86", "amd64", vec!["kvm".into()]),
+                ("fetcher-x86", "amd64", vec![FETCHER_FEATURE.into()]),
+                ("arm", "arm64", vec![]),
+            ]
+            .into_iter()
+            .map(|(h, a, pf)| {
+                (
+                    h.into(),
+                    rio_proto::types::HwClassLabels {
+                        labels: vec![rio_proto::types::NodeLabelMatch {
+                            key: ARCH_LABEL.into(),
+                            value: a.into(),
+                        }],
+                        provides_features: pf,
+                        ..Default::default()
+                    },
+                )
+            })
+            .collect(),
+            (0, 0),
+        );
+        let kvm = ["kvm".to_string()];
+        for h in ["x86", "kvm-x86", "fetcher-x86", "arm", "nope"] {
+            for a in [Some("amd64"), Some("arm64"), None] {
+                for f in [&[][..], &kvm[..]] {
+                    assert_eq!(
+                        cfg.admits_intent(h, a, f),
+                        cfg.matches_arch(h, a)
+                            && rio_common::k8s::features_compatible(f, &cfg.provides_for(h)),
+                        "admits_intent({h},{a:?},{f:?})"
+                    );
+                }
+                assert_eq!(
+                    cfg.admits_builder_backlog(h, a),
+                    cfg.matches_arch(h, a) && !cfg.is_fetcher_class(h),
+                    "admits_builder_backlog({h},{a:?})"
+                );
+            }
+        }
+        // Spot-check the load-bearing cells: fetcher excluded from
+        // builder backlog; kvm class admits kvm intents only.
+        assert!(cfg.admits_builder_backlog("x86", Some("amd64")));
+        assert!(!cfg.admits_builder_backlog("fetcher-x86", Some("amd64")));
+        assert!(cfg.admits_intent("kvm-x86", Some("amd64"), &kvm));
+        assert!(!cfg.admits_intent("x86", Some("amd64"), &kvm));
+        assert!(!cfg.admits_intent("nope", None, &[]));
     }
 
     #[test]

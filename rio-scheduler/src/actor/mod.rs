@@ -77,6 +77,31 @@ pub(crate) mod tests;
 /// Channel capacity for the actor command channel.
 pub(crate) const ACTOR_CHANNEL_CAPACITY: usize = 10_000;
 
+/// Shared phase-histogram emit + timer reset. Returns `elapsed` so a
+/// caller that wants the per-phase `debug!` line (merge.rs) can log it
+/// without re-reading the clock; pull.rs drops the return (a per-phase
+/// debug at fleet-claim rate is the R5 log-flood class
+/// `pull::AnswerLogLimiter` bounds). `housekeeping.rs`'s `phase!`
+/// macro is the same shape but interleaves `drain_admin_fast_lane`
+/// between the elapsed capture and the reset (B8 attribution plane) —
+/// that body is documented non-sharable.
+pub(super) fn record_phase(
+    metric: &'static str,
+    phase: &'static str,
+    t: &mut Instant,
+) -> std::time::Duration {
+    // Single clock read: `now - *t` then `*t = now` (vs `t.elapsed()`
+    // then `*t = Instant::now()`, two reads with the inter-read sliver
+    // — including the histogram record — charged to NO phase). ~9
+    // calls/PullAssignment at ~260/s; vDSO-cheap either way, but the
+    // single-read form keeps Σ(phase samples) ≈ wall time.
+    let now = Instant::now();
+    let elapsed = now - *t;
+    metrics::histogram!(metric, "phase" => phase).record(elapsed.as_secs_f64());
+    *t = now;
+    elapsed
+}
+
 /// Backpressure: reject new work above this fraction of channel capacity.
 const BACKPRESSURE_HIGH_WATERMARK: f64 = 0.80;
 
@@ -1666,6 +1691,18 @@ impl DagActor {
         // charge-free establishment arm.
         status_outbox.clear();
         metrics::gauge!("rio_scheduler_status_outbox_depth").set(0.0);
+        // Open-axis leader gauge (cannot join the `LeaderGauge` family —
+        // `system` is not a closed &'static [..] axis); zero every
+        // emitted label-series so a deposed replica's exporter stops
+        // serving the last nonzero per-system count (merged_bug_025).
+        // The own-edge-owned exemption proves a standby never WRITES
+        // it; zeroed here from every `clear_persisted_state` caller
+        // (LeaderLost, recovery start, the TOCTOU-flap discard, the
+        // failed-recovery Err arm — not just the lose-edge), so a
+        // LeaderRebound shows a single-scrape nonzero→0→nonzero dip
+        // (observability-only; the controller reads proto field 7, not
+        // this gauge).
+        crate::admin::zero_pending_by_system_gauge();
         // The DAG this fn just emptied no longer reflects PG; only the
         // next successful recovery (handle_leader_acquired's Ok arm)
         // re-asserts authoritativeness. Clearing HERE covers all four

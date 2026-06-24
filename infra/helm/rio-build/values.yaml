@@ -700,8 +700,13 @@ scheduler:
   #   to exactly one NodePool.
   # referenceHwClass: anchors ref-second normalization — IMMUTABLE across
   #   reloads without --allow-reference-change. mid-ebs-x86 chosen as the
-  #   broadest us-east-2 quota (gen-6/7 c/m/r, no nvme constraint, x86 is
-  #   the dominant build-traffic arch).
+  #   broadest us-east-2 quota (gen-7 c/m/r, no nvme constraint, x86 is
+  #   the dominant build-traffic arch). sh-017 narrowed mid-* from
+  #   ["6","7"]→["7"]; the anchor population shifts. Any narrowing of
+  #   referenceHwClass `requirements` MUST wipe-deploy (or pass
+  #   `--allow-reference-change` and accept the ref-second reset) —
+  #   the persisted ref-second state is invalidated by a changed
+  #   anchor population.
   # hwCostSource: "spot" = live DescribeSpotPriceHistory poll (lease-gated;
   #   IRSA `ec2:DescribeSpotPriceHistory` on the scheduler SA). "static" =
   #   fixed spot<od / hi>mid>lo seed ratios (cost.rs) — degrades cost
@@ -863,8 +868,9 @@ scheduler:
       #   closure (hw_class_names); the realized walk order is
       #   derived from cost — capacity-major (spot ~2.86x cheaper at
       #   the cap-only seed), then the cell_rank name-hash within a
-      #   band. Under spot+od the closure spans gen8:{spot,od} ∪
-      #   g7:{spot,od} — spot-preferred-with-od-fallback WITHOUT
+      #   band. Under spot+od the hi closure spans {hi(g8),hi-g7,
+      #   mid(g7),lo(g6)}×{spot,od} (4 tiers × 2 capacity = 8 cells
+      #   per storage/arch) — spot-preferred-with-od-fallback WITHOUT
       #   order enforcement: spot prices rank first, vanish/ICE
       #   evidence masks a dry spot plane at read time (A\masked),
       #   and the all-masked fallback re-offers the full closure, so
@@ -873,9 +879,16 @@ scheduler:
       # - sh-016 leaf-closure rule: every class referenced by any
       #   `ladder.rungs[].class` MUST itself declare `ladder` (even if
       #   `rungs: []` to mark an intentional terminal). Helm-lint
-      #   `hwclass-ladder-closed` enforces this. The g7 siblings
-      #   close to mid-ebs-{x86,arm}; mid-ebs carries the empty-rung
-      #   terminal sentinel.
+      #   `hwclass-ladder-closed` enforces this. The full chain runs
+      #   hi(g8) → hi-g7 → mid(g7) → lo(g6); lo-ebs-{x86,arm} carries
+      #   the empty-rung terminal sentinel.
+      # - sh-017 (single-gen-everywhere): each builder class
+      #   pins EXACTLY ONE instance-generation (hi=8, hi-g7=7, mid=7,
+      #   lo=6); capacity depth across gen 6+7+8 comes from the
+      #   ladder closure, never from widening a parent's
+      #   `instance-generation In [...]`. Exception: x86 nvme classes
+      #   `hi-nvme-x86-g7` and `mid-nvme-x86` stay `["6","7"]` because
+      #   gen-7 x86 c/m/r have no d-variants — see those rows.
       # - The g7 siblings carry `hw-band: hi-g7` (NOT `hi`): the
       #   controller's match_node walks class conjunctions
       #   lexicographic-first-match, so a sibling whose labels
@@ -891,6 +904,7 @@ scheduler:
         capacityTypes: [spot, on-demand]
         ladder:
           rungs:
+            - {class: hi-ebs-x86}
             - {class: hi-nvme-x86-g7}
         labels:
           - {key: rio.build/hw-band, value: hi}
@@ -898,6 +912,13 @@ scheduler:
           - {key: kubernetes.io/arch, value: amd64}
         requirements:
           - {key: karpenter.k8s.aws/instance-category, operator: In, values: [c, m, r]}
+          # sh-017: single-gen pin. The live_101 widen to ["7","8"]
+          # (cache-poison workaround) is reverted — capacity depth now
+          # comes from the ladder closure (gen 6+7+8 reachable via
+          # hi-ebs-x86 + hi-nvme-x86-g7 → mid → lo), not from widening
+          # this parent. Single-gen pin accepted: IceBackoff bounds
+          # parent retry to ~6/hr; ladder closure provides depth;
+          # revisit if gen-8 x86-nvme spot ICE becomes chronic.
           - {key: karpenter.k8s.aws/instance-generation, operator: In, values: ["8"]}
           - {key: kubernetes.io/arch, operator: In, values: [amd64]}
       hi-nvme-arm:
@@ -905,6 +926,7 @@ scheduler:
         capacityTypes: [spot, on-demand]
         ladder:
           rungs:
+            - {class: hi-ebs-arm}
             - {class: hi-nvme-arm-g7}
         labels:
           - {key: rio.build/hw-band, value: hi}
@@ -912,10 +934,14 @@ scheduler:
           - {key: kubernetes.io/arch, value: arm64}
         requirements:
           - {key: karpenter.k8s.aws/instance-category, operator: In, values: [c, m, r]}
+          # sh-017: single-gen pin (live_101 widen reverted; see
+          # hi-nvme-x86 above). Single-gen pin accepted: IceBackoff
+          # bounds parent retry to ~6/hr; ladder closure provides
+          # depth; revisit if gen-8 arm-nvme spot ICE becomes chronic.
           - {key: karpenter.k8s.aws/instance-generation, operator: In, values: ["8"]}
           - {key: kubernetes.io/arch, operator: In, values: [arm64]}
       hi-ebs-x86:
-        nodeClass: rio-default
+        nodeClass: rio-default-express
         capacityTypes: [spot, on-demand]
         ladder:
           rungs:
@@ -929,7 +955,7 @@ scheduler:
           - {key: karpenter.k8s.aws/instance-generation, operator: In, values: ["8"]}
           - {key: kubernetes.io/arch, operator: In, values: [amd64]}
       hi-ebs-arm:
-        nodeClass: rio-default
+        nodeClass: rio-default-express
         capacityTypes: [spot, on-demand]
         ladder:
           rungs:
@@ -948,15 +974,15 @@ scheduler:
       # capacity types all come from here, and the cell universe grows
       # through the existing class x capacity product. gen-7 c/m/r,
       # same storage/arch split as the parents; spot+od under the
-      # owner doctrine (the full hi walk is gen8:{spot,od} ∪
-      # g7:{spot,od} — membership-only, cost-ranked).
+      # owner doctrine (the full hi walk is {hi,hi-g7,mid,lo}×{spot,
+      # od} across gen 8+7+6 — membership-only, cost-ranked).
       hi-nvme-x86-g7:
         nodeClass: rio-nvme
         capacityTypes: [spot, on-demand]
         ladder:
           rungs:
             - {class: hi-ebs-x86-g7}
-            - {class: mid-ebs-x86}
+            - {class: mid-nvme-x86}
         labels:
           - {key: rio.build/hw-band, value: hi-g7}
           - {key: rio.build/storage, value: nvme}
@@ -964,9 +990,11 @@ scheduler:
         requirements:
           - {key: karpenter.k8s.aws/instance-category, operator: In, values: [c, m, r]}
           # sh-016: gen-7 x86 c/m/r have NO `d` (instance-store)
-          # variants — c7gd/m7gd/r7gd are arm64-only. Widen to gen 6
-          # so c6id/m6id/r6id satisfy this; otherwise the (a) (0,0)
-          # ceiling excludes the class and the gen8→g7 rung is a no-op.
+          # variants — c7gd/m7gd/r7gd are arm64-only. This is
+          # effectively gen-6 (c6id/m6id/r6id); kept at ["6","7"] so
+          # future c7id/m7id auto-join when AWS ships them. Dropping
+          # "6" today would yield a (0,0) catalog ceiling and exclude
+          # the class entirely.
           - {key: karpenter.k8s.aws/instance-generation, operator: In, values: ["6", "7"]}
           - {key: kubernetes.io/arch, operator: In, values: [amd64]}
       hi-nvme-arm-g7:
@@ -975,7 +1003,7 @@ scheduler:
         ladder:
           rungs:
             - {class: hi-ebs-arm-g7}
-            - {class: mid-ebs-arm}
+            - {class: mid-nvme-arm}
         labels:
           - {key: rio.build/hw-band, value: hi-g7}
           - {key: rio.build/storage, value: nvme}
@@ -985,7 +1013,7 @@ scheduler:
           - {key: karpenter.k8s.aws/instance-generation, operator: In, values: ["7"]}
           - {key: kubernetes.io/arch, operator: In, values: [arm64]}
       hi-ebs-x86-g7:
-        nodeClass: rio-default
+        nodeClass: rio-default-express
         capacityTypes: [spot, on-demand]
         ladder:
           rungs:
@@ -999,7 +1027,7 @@ scheduler:
           - {key: karpenter.k8s.aws/instance-generation, operator: In, values: ["7"]}
           - {key: kubernetes.io/arch, operator: In, values: [amd64]}
       hi-ebs-arm-g7:
-        nodeClass: rio-default
+        nodeClass: rio-default-express
         capacityTypes: [spot, on-demand]
         ladder:
           rungs:
@@ -1014,52 +1042,81 @@ scheduler:
           - {key: kubernetes.io/arch, operator: In, values: [arm64]}
       mid-nvme-x86:
         nodeClass: rio-nvme
+        # Pre-existing structure: hi-nvme-x86-g7 / mid-nvme-x86 /
+        # lo-nvme-x86 all resolve to the SAME instance population
+        # (gen-6 x86 c/m/r d-variants — gen-7 x86 has none). The
+        # ladder edges into this row are membership-preserving no-ops
+        # on the type axis, kept for graph regularity (closure walk
+        # crosses to ebs at each tier).
+        ladder:
+          rungs:
+            - {class: mid-ebs-x86}
+            - {class: lo-nvme-x86}
         labels:
           - {key: rio.build/hw-band, value: mid}
           - {key: rio.build/storage, value: nvme}
           - {key: kubernetes.io/arch, value: amd64}
         requirements:
           - {key: karpenter.k8s.aws/instance-category, operator: In, values: [c, m, r]}
+          # ["6","7"] exception — see hi-nvme-x86-g7 above (same root).
           - {key: karpenter.k8s.aws/instance-generation, operator: In, values: ["6", "7"]}
           - {key: kubernetes.io/arch, operator: In, values: [amd64]}
       mid-nvme-arm:
         nodeClass: rio-nvme
+        # sh-017 narrows this row to ["7"], making it spec-identical to
+        # hi-nvme-arm-g7 (gen-7 arm c/m/r d-variants — c7gd/m7gd/r7gd).
+        # The ladder edge into this row is a membership-preserving
+        # no-op on the type axis, kept for graph regularity (closure
+        # walk crosses to ebs at each tier; lo-nvme-arm reaches gen-6).
+        ladder:
+          rungs:
+            - {class: mid-ebs-arm}
+            - {class: lo-nvme-arm}
         labels:
           - {key: rio.build/hw-band, value: mid}
           - {key: rio.build/storage, value: nvme}
           - {key: kubernetes.io/arch, value: arm64}
         requirements:
           - {key: karpenter.k8s.aws/instance-category, operator: In, values: [c, m, r]}
-          - {key: karpenter.k8s.aws/instance-generation, operator: In, values: ["6", "7"]}
+          - {key: karpenter.k8s.aws/instance-generation, operator: In, values: ["7"]}
           - {key: kubernetes.io/arch, operator: In, values: [arm64]}
       mid-ebs-x86:
         nodeClass: rio-default
-        # sh-016 (c): terminal sentinel — `rungs: []` marks an
-        # intentional ladder terminal (helm-lint hwclass-ladder-closed
-        # requires every rung target to declare `ladder`; an empty
-        # list ends the chain without a lint exemption).
-        ladder: {rungs: []}
+        # sh-017: closure now extends through lo-* (gen-6) so a
+        # mid-seeded hosting closure reaches gen 7+6 (and a hi-seeded
+        # one gen 8+7+6) as separately-benched cells — capacity depth
+        # WITHOUT widening any parent's instance-generation list
+        # (hw_perf factor pollution; see the band-semantics block
+        # above).
+        ladder:
+          rungs:
+            - {class: lo-ebs-x86}
         labels:
           - {key: rio.build/hw-band, value: mid}
           - {key: rio.build/storage, value: ebs}
           - {key: kubernetes.io/arch, value: amd64}
         requirements:
           - {key: karpenter.k8s.aws/instance-category, operator: In, values: [c, m, r]}
-          - {key: karpenter.k8s.aws/instance-generation, operator: In, values: ["6", "7"]}
+          - {key: karpenter.k8s.aws/instance-generation, operator: In, values: ["7"]}
           - {key: kubernetes.io/arch, operator: In, values: [amd64]}
       mid-ebs-arm:
         nodeClass: rio-default
-        ladder: {rungs: []}
+        ladder:
+          rungs:
+            - {class: lo-ebs-arm}
         labels:
           - {key: rio.build/hw-band, value: mid}
           - {key: rio.build/storage, value: ebs}
           - {key: kubernetes.io/arch, value: arm64}
         requirements:
           - {key: karpenter.k8s.aws/instance-category, operator: In, values: [c, m, r]}
-          - {key: karpenter.k8s.aws/instance-generation, operator: In, values: ["6", "7"]}
+          - {key: karpenter.k8s.aws/instance-generation, operator: In, values: ["7"]}
           - {key: kubernetes.io/arch, operator: In, values: [arm64]}
       lo-nvme-x86:
         nodeClass: rio-nvme
+        ladder:
+          rungs:
+            - {class: lo-ebs-x86}
         labels:
           - {key: rio.build/hw-band, value: lo}
           - {key: rio.build/storage, value: nvme}
@@ -1070,6 +1127,9 @@ scheduler:
           - {key: kubernetes.io/arch, operator: In, values: [amd64]}
       lo-nvme-arm:
         nodeClass: rio-nvme
+        ladder:
+          rungs:
+            - {class: lo-ebs-arm}
         labels:
           - {key: rio.build/hw-band, value: lo}
           - {key: rio.build/storage, value: nvme}
@@ -1080,6 +1140,10 @@ scheduler:
           - {key: kubernetes.io/arch, operator: In, values: [arm64]}
       lo-ebs-x86:
         nodeClass: rio-default
+        # Terminal sentinel — `rungs: []` marks an intentional ladder
+        # terminal (helm-lint hwclass-ladder-closed requires every
+        # rung target to declare `ladder`).
+        ladder: {rungs: []}
         labels:
           - {key: rio.build/hw-band, value: lo}
           - {key: rio.build/storage, value: ebs}
@@ -1090,6 +1154,7 @@ scheduler:
           - {key: kubernetes.io/arch, operator: In, values: [amd64]}
       lo-ebs-arm:
         nodeClass: rio-default
+        ladder: {rungs: []}
         labels:
           - {key: rio.build/hw-band, value: lo}
           - {key: rio.build/storage, value: ebs}
@@ -1203,15 +1268,34 @@ scheduler:
       # od-only-by-nodepool exception is the STORE fleet, not any
       # builder class. bind[43-metal-capacity-doctrine.sh]
       # bind[44-store-nodepool.sh])
+      # Fetchers are tiny network/disk-bound jobs (curl + nar pack);
+      # host-agnostic. Only `arch` + `gen Gt "3"` (gen>3 ≈ nitro, so the
+      # rio-fetcher NodeClass's gp3 volumes attach) — Karpenter picks
+      # whatever's cheapest/available across every category. Builders
+      # keep the c/m/r gen6+ floor; they're compute-bound.
+      #
+      # No size cap: fetchers are CPU-light, so FFD bin-packs many onto
+      # a single large node. The bin-pack constraint is the rio-fetcher
+      # NodeClass's xvdc EBS throughput (NAR staging is sequential
+      # write), not vCPU — see `templates/karpenter.yaml`'s `lowIops`
+      # xvdc=500 MiB/s. The earlier ≤2xlarge cap treated a symptom
+      # (Karpenter's type×zone×cap-keyed unavailableOfferings cache
+      # blanket-masking fetcher offerings when a builder ICE storm
+      # poisoned the same types); the fix for THAT is the
+      # rio-default-express split, not here.
+      #
+      # Requirement keys here MUST be in catalog.rs `SYNTHESIZED_LABELS`
+      # (the §13c-2 matcher's projection); validate_shape rejects keys
+      # outside it so an unmodelled key becomes a config-load error
+      # instead of a silent boot-time (0,0)-exclusion (live_101).
       fetcher-x86:
-        nodeClass: rio-default
+        nodeClass: rio-fetcher
         labels:
           - {key: rio.build/fetcher, value: "true"}
           - {key: kubernetes.io/arch, value: amd64}
         requirements:
           - {key: kubernetes.io/arch, operator: In, values: [amd64]}
-          - {key: karpenter.k8s.aws/instance-category, operator: In, values: [c, m, r]}
-          - {key: karpenter.k8s.aws/instance-generation, operator: Gt, values: ["5"]}
+          - {key: karpenter.k8s.aws/instance-generation, operator: Gt, values: ["3"]}
         capacityTypes: [spot, on-demand]
         taints:
           - {key: rio.build/fetcher, value: "true", effect: NoSchedule}
@@ -1222,14 +1306,13 @@ scheduler:
         # silently regressing the fanout gate.
         maxFleetCores: 5000
       fetcher-arm:
-        nodeClass: rio-default
+        nodeClass: rio-fetcher
         labels:
           - {key: rio.build/fetcher, value: "true"}
           - {key: kubernetes.io/arch, value: arm64}
         requirements:
           - {key: kubernetes.io/arch, operator: In, values: [arm64]}
-          - {key: karpenter.k8s.aws/instance-category, operator: In, values: [c, m, r]}
-          - {key: karpenter.k8s.aws/instance-generation, operator: Gt, values: ["5"]}
+          - {key: karpenter.k8s.aws/instance-generation, operator: Gt, values: ["3"]}
         capacityTypes: [spot, on-demand]
         taints:
           - {key: rio.build/fetcher, value: "true", effect: NoSchedule}
@@ -1546,14 +1629,25 @@ karpenter:
     # the floor IS the threshold, which is fine: DAG-shaped demand is
     # deterministic, not stochastic — a hazard model can't see it.
     #
-    # Known gap: this is blind insurance — pays idle cost whether or
-    # not work is pending. Targeted fix is a backlog-aware floor:
-    # scheduler aggregates Queued+Created cores per cell into
-    # `GetSpawnIntentsResponse`, controller raises the cell floor while
-    # nonzero. Revisit at production fleet sizes.
+    # The DAG-depth blind spot is addressed by `backlogFloorCapRatio`
+    # below (`ctrl.nodeclaim.backlog-floor`): scheduler ships
+    # full-population `pending_by_system` on `GetSpawnIntentsResponse`,
+    # and `reap_idle` holds `min(pending, ⌈registered × cap_ratio⌉)`
+    # nodes per cell while it's nonzero. AT THE SHIPPED DEFAULT
+    # (`backlogFloorCapRatio: 0.0` below) the floor is DISABLED and
+    # this 300s static floor IS still the only DAG-shape defence —
+    # raise `backlogFloorCapRatio` (rollout step 4) before lowering
+    # this. Once cap_ratio > 0 the 300s floor becomes genuine sub-5min
+    # insurance, not the only defence.
     minConsolidationTime:
       "fetcher-*": 600.0
       "*": 300.0
+    # ctrl.nodeclaim.backlog-floor: cap the per-cell warm-floor at this
+    # fraction of currently-registered nodes. 1.0 = full hold while any
+    # Queued backlog exists; 0.0 = floor disabled. Code default is 1.0
+    # (steady-state target); rollout starts here at 0.0 — mechanism
+    # wired, floor disabled — to be raised once observed in prod.
+    backlogFloorCapRatio: 0.0
   clusterName: ""   # from tofu output cluster_name
   nodeRoleName: ""  # from tofu output karpenter_node_role_name
   # ADR-021: NixOS node AMI (full cutover — no Bottlerocket). The
@@ -1607,12 +1701,22 @@ karpenter:
   # writes, link); baseline 3000 throttles -j32+. ~11 pods share this
   # volume, so 80k → ~7.3k/pod sustained where the Nitro per-instance
   # cap allows it (per-size, family-agnostic: 4xl=20k, 8xl=40k,
-  # 12xl=60k, 16xl=80k, 24xl=120k, 32xl=160k; smaller instances clamp
-  # regardless of provisioning). Phase-2 RAID0 (2×80k stripe →
-  # 160k aggregate) is gated on post-80k iostat showing xvdb pegged
-  # on the 24xlarge+ fraction of node-hours.
+  # 12xl=60k, 16xl=80k, 24xl=120k, 32xl=160k).
+  #
+  # live_101 root: gp3 above 16000 IOPS or 1000 MiB/s requires a
+  # Block-Express attachment. CreateFleet REJECTS (UnfulfillableCapacity)
+  # any non-BE-capable instance type paired with such a volume — it
+  # does NOT clamp to the instance's ceiling. So `quotaVolumeIops`/
+  # `quotaVolumeThroughputMiBps` apply only to `rio-default-express`
+  # (and `rio-metal`, whose `metal-*` sizes are all BE-capable);
+  # `rio-default` carries the *Default pair below (the gp3 non-BE
+  # ceiling, valid on every nitro size). Phase-2 RAID0 (2×80k stripe →
+  # 160k aggregate) is gated on post-80k iostat showing xvdb pegged on
+  # the 24xlarge+ fraction of node-hours.
   quotaVolumeIops: 80000
   quotaVolumeThroughputMiBps: 2000
+  quotaVolumeIopsDefault: 16000
+  quotaVolumeThroughputMiBpsDefault: 1000
   # Dedicated /var/rio volume (/dev/xvdc) on rio-default/rio-metal —
   # XFS with prjquota, formatted+mounted by the AMI's rio-ebs-mount
   # unit when the node has no instance-store NVMe. rio-mountd needs a
@@ -1730,12 +1834,24 @@ karpenter:
       weight: 50
       labels:
         rio.build/node-role: store
+      # rio-default-express: store I/O is the 80k-IOPS Block-Express
+      # xvdb. The instance-cpu∈{32..64} floor below is the BE-attach
+      # floor — Block Express attach needs ≥8xlarge = 32 vCPU;
+      # CreateFleet rejects (does NOT clamp) a non-BE-capable size
+      # paired with an >16k-IOPS gp3 volume (live_101 root: a "16"
+      # entry here let Karpenter pick 4xlarge, every launch failed,
+      # the failure re-poisoned the offerings cache). The earlier
+      # +gen-7a widen stays as harmless slack.
+      nodeClass: rio-default-express
       taints:
         - {key: rio.build/store, value: "true", effect: NoSchedule}
       requirements:
         - key: karpenter.k8s.aws/instance-family
           operator: In
-          values: [c8a, m8a, r8a]
+          values: [c7a, c8a, m7a, m8a, r7a, r8a]
+        - key: karpenter.k8s.aws/instance-cpu
+          operator: In
+          values: ["32", "48", "64"]
         - key: karpenter.sh/capacity-type
           operator: In
           values: [on-demand]

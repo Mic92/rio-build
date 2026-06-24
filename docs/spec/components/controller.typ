@@ -1890,6 +1890,21 @@ budget brake's rotation property upstream of the mint.
   inter-build dispatch gap and `>-<` DAG bottlenecks at ≈ \$0.0083/node-reap-avoided).
 ]
 
+#r("ctrl.nodeclaim.backlog-floor")[
+  While the scheduler reports nonzero `pending_by_system` for a system
+  a cell admits, and that report is fresher than the cell's staleness
+  bound, `reap_idle` MUST NOT delete a registered non-terminating
+  NodeClaim in that cell if doing so would reduce the cell's
+  registered-non-terminating count below
+  `min(pending_for_cell, ⌈registered × backlog_floor_cap_ratio⌉)`.
+]
+The floor sits after the NA-threshold gate and after the `reserved`
+skip --- it only saves nodes the NA model would otherwise reap. The
+`pending_by_system` aggregate is the full-population `status==Queued`
+derivation count (NOT the §13b 1-layer forecast frontier and NOT the
+Ready-class `queued_by_system`), accumulated in the same
+`iter_nodes()` pass as `intents` so the controller sees one DAG state.
+
 #r("ctrl.nodeclaim.shim-nodepool")[
   A single shim NodePool (`limits:{cpu:0}`, `disruption.budgets:[{nodes:"0"}]`)
   satisfies Karpenter's state-tracking lookup; the controller stamps

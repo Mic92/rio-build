@@ -776,6 +776,10 @@ DURATION_CENSUS_ROWS = {
         "fold-executions (the WO-S4-2 close renamed the unit INTO the consumer clock)",
         "WO-S4-2: the fold-clock conversion made nominal at the landed rename",
     ),
+    ("rio-controller/src/reconcilers/nodeclaim_pool/mod.rs", "MIN_CONSOLIDATION_TIME_FALLBACK_SECS"): (
+        "wall (epoch_secs delta at consolidate_after's idle threshold and stale_after's pending_at age)",
+        "ctrl.nodeclaim.backlog-floor: shared 300s fallback for the Default `\"*\"` glob and the stale_after double-None arm — single mint so a retune cannot leave `2 x min_consolidation_time` mismatched against the documented bound",
+    ),
     ("rio-store/src/logs/sessions.rs", "SESSION_MARGIN_SLACK"): (
         "wall (the session-staleness margin term over PG now() age)",
         "bw12 WO-S1-4 (re-derived from the bw11 H1''' family): compile-certified STALE >= worst_one_miss_committed_age() + SLACK, SLACK > 0",

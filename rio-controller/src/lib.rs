@@ -616,6 +616,31 @@ pub fn describe_metrics() {
          confirm the per-cell e_fitting_cores partition and the policy floor \
          are both routing (r35 bug_023/bug_050; r38 bug_022)."
     );
+    // r[impl obs.metric.backlog-floor]
+    describe_gauge!(
+        "rio_controller_nodeclaim_warm_floor",
+        "Per-cell backlog-derived node-count floor for idle-reap \
+         (ctrl.nodeclaim.backlog-floor). reap_idle will not delete \
+         below this. min(pending_for_cell, ⌈registered × \
+         backlog_floor_cap_ratio⌉), or 0 when pending_by_system is \
+         stale/empty. Zero-written for every gauge_universe cell."
+    );
+    // r[impl obs.metric.backlog-floor]
+    describe_gauge!(
+        "rio_controller_nodeclaim_backlog_pending",
+        "Per-cell pre-cap backlog signal: Σ pending_by_system over \
+         systems this cell arch-admits. The warm_floor input BEFORE \
+         the min(live × cap_ratio) cap — observable at cap_ratio=0.0 \
+         for read-only rollout verification."
+    );
+    // r[impl obs.metric.backlog-floor]
+    describe_counter!(
+        "rio_controller_nodeclaim_reap_suppressed_total",
+        "Idle-reaps skipped, per tick per node, because the cell was \
+         at its backlog warm-floor (reason=backlog_floor). A 28-node \
+         fleet held through a 33-tick bottleneck increments ~924, not \
+         28 — rate semantics, query with increase()."
+    );
     describe_counter!(
         "rio_controller_ddsketch_seed_fallback_total",
         "Per-`cell` seed injections at CellSketches::seed(). Incremented once per \

@@ -518,6 +518,7 @@ impl CellSketches {
         let mut registered_cells = Vec::new();
         let mut observed = Vec::new();
         for n in live {
+            // reglive-exempt: boot-record gate — only registered have boot times
             if !n.registered || recorded.contains(&n.name) {
                 continue;
             }

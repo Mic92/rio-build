@@ -106,6 +106,16 @@ const TICK_PHASE_BUCKETS: &[f64] = &[
     0.001, 0.005, 0.025, 0.1, 0.5, 1.0, 5.0, 15.0, 30.0, 60.0, 120.0, 300.0,
 ];
 
+/// Bucket boundaries for `rio_scheduler_pull_phase_seconds`. Spans
+/// sub-ms (the in-memory `admit_pull` decision) through the observed
+/// 12.5→23.9 ms whole-turn band (idle-gap §9.1) to a 10 s ceiling for
+/// the PG-bound phases under brownout. Ceiling matches
+/// `actor_cmd_seconds`' "+Inf is the head-of-line stall alert"
+/// rationale.
+const PULL_PHASE_BUCKETS: &[f64] = &[
+    0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 1.0, 2.5, 10.0,
+];
+
 /// Bucket boundaries for `rio_scheduler_spawn_intents_response_bytes`
 /// (BYTES, not seconds — prost `encoded_len` of one GetSpawnIntents
 /// response). Powers-of-~4 from an idle answer (~hundreds of bytes)
@@ -149,6 +159,7 @@ pub const HISTOGRAM_BUCKETS: &[(&str, &[f64])] = &[
     ),
     ("rio_scheduler_merge_phase_seconds", MERGE_PHASE_BUCKETS),
     ("rio_scheduler_tick_phase_seconds", TICK_PHASE_BUCKETS),
+    ("rio_scheduler_pull_phase_seconds", PULL_PHASE_BUCKETS),
     ("rio_scheduler_build_graph_edges", GRAPH_EDGES_BUCKETS),
     (
         "rio_scheduler_attempt_requeue_seconds",
@@ -205,6 +216,13 @@ pub fn describe_metrics() {
          split is queued_by_system on ClusterStatus/GetSpawnIntents)"
     );
     describe_gauge!(
+        "rio_scheduler_spawn_intents_pending_by_system",
+        "status==Queued derivation count per system on the last \
+         GetSpawnIntents — the FULL DAG-depth backlog (backlog warm-floor \
+         signal, ctrl.nodeclaim.backlog-floor). NOT the Ready-class \
+         queued_by_system and NOT the §13b forecast frontier."
+    );
+    describe_gauge!(
         "rio_scheduler_derivations_running",
         "Derivations currently building"
     );
@@ -249,6 +267,32 @@ pub fn describe_metrics() {
          every queued RPC and starves admin-served probes — a phase in the \
          tens-of-seconds buckets names the term to bound, instead of a \
          log-silent stall."
+    );
+    // r[impl obs.metric.pull-phase]
+    describe_histogram!(
+        "rio_scheduler_pull_phase_seconds",
+        "Per-phase PullAssignment latency (labeled by phase: admit | \
+         fence_write | fence_read | solve | mint | persist_status | \
+         input_closure | pin_inputs | build_proto). Decomposes \
+         rio_scheduler_actor_cmd_seconds{cmd=PullAssignment}: the \
+         idle-gap §9.1 12.5→23.9 ms shift was workload, not code — \
+         closure size drives input_closure + pin_inputs. mint / \
+         pin_inputs / fence_* are PG-awaiting; admit / solve / \
+         input_closure are in-memory. Untaken branches are not \
+         recorded: Reject*/Gone/NotYetReady record admit (+ fence_write \
+         on keyed Gone/NotYetReady) only; DeliverExisting records admit \
+         + build_proto (build_proto's baseline includes the post-admit \
+         obligation match — sub-µs, no .await, below bucket resolution); \
+         a DeliverNew DECISION can still bail to \
+         NotYetReady before solve (fence-read fail / db_id-unpersisted \
+         / excluded-source-node), so count(decision=deliver_new) >= \
+         count(phase=solve); NonKeyed DeliverNew skips fence_read (solve's \
+         baseline then includes the post-admit obligation match — \
+         sub-µs, no .await, below bucket resolution); empty-input \
+         DeliverNew skips pin_inputs; Materialization-kind DeliverNew \
+         skips input_closure/pin_inputs. Compare phases against each \
+         other, not against actor_cmd_seconds (uninstrumented \
+         residual = display-emit + reply-send)."
     );
     describe_histogram!(
         "rio_scheduler_actor_cmd_seconds",
@@ -563,6 +607,20 @@ pub fn describe_metrics() {
          floating-CA paths, which are computed post-build); alert if \
          rate > 0 — a forged report, or an upload whose best-effort ingest \
          stamp was skipped (store-side warn names the path)"
+    );
+    // r[impl obs.metric.pull-phase]
+    describe_counter!(
+        "rio_scheduler_pull_decision_total",
+        "Post-screen admit_pull decisions per PullAssignment turn \
+         (labeled by decision: deliver_new | deliver_existing | \
+         not_yet_ready | gone | reject_token | \
+         reject_stale_generation). Counted AFTER the confirm-only and \
+         degraded-term screens — the post-screen kernel admission, NOT \
+         the wire outcome (DeliverNew can still bail to NotYetReady/ \
+         StaleGeneration at the mint fence / excluded-node backstop / \
+         transition reject). pull_rejected_total below counts the \
+         credential layer (pre-actor); this counts the kernel layer \
+         (in-actor)."
     );
     describe_counter!(
         "rio_scheduler_pull_rejected_total",

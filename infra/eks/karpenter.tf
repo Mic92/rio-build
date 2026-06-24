@@ -14,8 +14,9 @@
 #   - Node IAM role (referenced by EC2NodeClass.spec.role)
 #   - EKS access entry for the node role (so kubelets can join)
 module "karpenter" {
-  source  = "terraform-aws-modules/eks/aws//modules/karpenter"
-  version = "~> 21.0"
+  source = "terraform-aws-modules/eks/aws//modules/karpenter"
+  # Same ceiling as module "eks" in main.tf — see comment there.
+  version = "~> 21.0, < 21.24"
 
   cluster_name = module.eks.cluster_name
 

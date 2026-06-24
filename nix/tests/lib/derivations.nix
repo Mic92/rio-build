@@ -85,6 +85,11 @@ rec {
   # the same literal so the served path and the FOD's outputHash agree.
   hashedMirrorProbeHex = builtins.hashString "sha256" "rio-hashed-mirror-probe\n";
 
+  # `>-<` hourglass: { wide = 8 zero-dep leaves; tails = 8 leaves
+  # behind 1 neck }. Drives vm-backlog-floor-kwok (Phase A builds
+  # `-A wide`, Phase B builds `-A tails`).
+  hourglass = "${dir}/hourglass.nix";
+
   # 50 parallel leaves + 1 collector. Load-test fanout for
   # scheduling.nix:load-50drv. Fanout not linear chain: 50 serial
   # builds at tick=2s ≈ 150-200s; fanout is ~40-60s and exercises

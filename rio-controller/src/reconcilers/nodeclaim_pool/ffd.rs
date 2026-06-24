@@ -128,6 +128,22 @@ impl LiveNode {
         self.terminating_since.is_some()
     }
 
+    /// `Registered=True ∧ ¬terminating` — the "live registered capacity"
+    /// predicate. Every read of `.registered` / `.terminating()` in
+    /// `nodeclaim_pool/` that means "is this node live registered
+    /// capacity right now" routes through here, so when the definition
+    /// tightens (e.g. exclude cordoned/NotReady) all consumers move
+    /// together. Caller alignment is enforced by
+    /// `checks.is-registered-live-coherence` (nix/misc-checks.nix): a
+    /// direct field read without a same-line `reglive-exempt:` token is
+    /// CI-red. The hand-maintained N-callers enumeration this doc once
+    /// carried went stale 7× across one feature branch — the policy
+    /// check replaces it.
+    #[inline]
+    pub fn is_registered_live(&self) -> bool {
+        self.registered && !self.terminating()
+    }
+
     /// Remaining placeable `(cores, mem, disk)`. Registered →
     /// `allocatable − requested` (saturating: a mis-accounted node
     /// reads as 0-free, not underflow). In-flight → `allocatable`
@@ -762,6 +778,7 @@ impl<'a> SimState<'a> {
         // r[impl ctrl.nodeclaim.ffd-exclude-terminating]
         let free: HashMap<&str, (u32, u64, u64)> = live
             .iter()
+            // reglive-exempt: FFD free-bin set counts in-flight allocatable
             .filter(|n| n.cell.is_some() && !n.terminating())
             .map(|n| (n.name.as_str(), n.free()))
             .collect();
@@ -775,10 +792,12 @@ impl<'a> SimState<'a> {
         // it's about to leave.
         let by_node_name: HashMap<&str, (bool, &str)> = live
             .iter()
+            // reglive-exempt: registered is a separate output dimension below
             .filter(|n| !n.terminating())
             .filter_map(|n| {
                 n.node_name
                     .as_deref()
+                    // reglive-exempt: tuple value, not a liveness predicate
                     .map(|nn| (nn, (n.registered, n.name.as_str())))
             })
             .collect();
@@ -885,6 +904,7 @@ fn sim_one<'a>(
                 f.0 -= ic;
                 f.1 -= im;
                 f.2 -= id;
+                // reglive-exempt: !registered = "in-flight" output flag
                 placeable.push((i, n.name.clone(), !n.registered));
             }
             None => unplaced.push(i),

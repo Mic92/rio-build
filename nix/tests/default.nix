@@ -68,7 +68,142 @@ let
   materialize-failover = import ./scenarios/materialize-failover.nix;
   sla-sizing = import ./scenarios/sla-sizing.nix;
   forecast-provisioning = import ./scenarios/forecast-provisioning.nix;
+  backlog-floor = import ./scenarios/backlog-floor.nix;
   kwok = import ./fixtures/kwok.nix { inherit pkgs; };
+  # Hoisted so the dominance assertion below and the values overlay
+  # share one literal — the prior comment-only re-derivation had a
+  # 10s margin and three independent `120`/`130` literals.
+  # isInt: the YAML render below is `${toString seed}.0`; a float
+  # binding would `toString` to `"130.000000"` → `130.000000.0` and
+  # break helm values parse for both KWOK scenarios far from the edit
+  # site. The dominance asserts accept mixed arithmetic, so this is
+  # the only structural guard.
+  kwokLeadTimeSeed =
+    let
+      v = 130;
+    in
+    assert pkgs.lib.assertMsg (pkgs.lib.isInt v)
+      "kwokLeadTimeSeed must be a Nix integer (the YAML render is `\${toString seed}.0`)";
+    v;
+  backlogFloorRegWait = 120;
+  # vm-sla-sizing-kwok registration-wait budget: the owned-NodeClaim
+  # wait + the Registered=True wait (forecast-provisioning.nix) + 10s
+  # nominal controller-tick. THREADED into forecast-provisioning.nix
+  # so widening either wait there fails the dominance assert at eval
+  # (the prior comment-only re-derivation went stale at 60→120).
+  # Asserted against the unregistered-reap grace at the
+  # vm-sla-sizing-kwok call site.
+  slaSizingOwnedWait = 90;
+  slaSizingRegWait = 120;
+  slaSizingRegBudget = slaSizingOwnedWait + slaSizingRegWait + 10;
+  # vm-backlog-floor-kwok registration-wait budget: two regWaitSecs
+  # waits + 10s nominal controller-tick. Hoisted so the dominance
+  # assert reads at the same altitude as slaSizingRegBudget (was
+  # recomputed inline twice — condition + toString).
+  backlogFloorRegBudget = 2 * backlogFloorRegWait + 10;
+  # Shared dominance-assert body so the `2×seed > budget` rule and its
+  # ~80%-identical "dominance violated" prose are expressed once. A
+  # third KWOK scenario or a tweak to the rule (seed-weighted factor,
+  # tick-slack term) edits here, not N copies.
+  kwokDominanceAssert =
+    scenario: budget: hint:
+    pkgs.lib.assertMsg (2 * kwokLeadTimeSeed > budget)
+      "kwokLeadTimeSeed dominance violated: grace 2×${toString kwokLeadTimeSeed}=${
+        toString (2 * kwokLeadTimeSeed)
+      }s must strictly exceed ${scenario}'s registration budget ${toString budget}s — ${hint}";
+  # Shared values overlay for KWOK-backed nodeclaim_pool scenarios
+  # (vm-sla-sizing-kwok, vm-backlog-floor-kwok). B16: Helm
+  # deep-merges values.yaml's prod hwClasses + leadTimeSeed with
+  # vmtest-full.yaml's `vmtest`, giving N+1 hwClasses. The
+  # scheduler's solve_full draws SpawnIntent.hw_class_names from that
+  # N+1-set excluding `vmtest`; `assign_to_cells` then never produces
+  # a `vmtest:spot` key and cover_deficit emits created=0. Helm only
+  # honours `null` deletion against CHART values.yaml (not prior
+  # `-f` files), so a whole-map `hwClasses: null` in one file
+  # followed by `hwClasses: {vmtest:...}` in the next coalesces to
+  # `{vmtest:...}` user-side then deep-merges back to 13 against
+  # chart defaults. Per-subkey nulls are the only way to delete
+  # chart-default map entries while keeping `vmtest` — generated
+  # here so the prod hwClass list stays single-sourced.
+  #
+  # leadTimeSeed = 130 (NOT kwok's ~5s nominal boot): the seed feeds
+  # health::classify's unregistered-reap grace (`2 x seed`), and the
+  # grace must STRICTLY DOMINATE every consumer's registration-wait
+  # budget or the reaper races the waits under load. With the old
+  # 5.0 the grace was 10s while KWOK's Stage reconcile can stall
+  # past it under full-gate builder load: the controller (correctly,
+  # per its predicate — same-frame `age > 2 x seed` arithmetic)
+  # reaped the unregistered claim, the BootTimeout reap ICE-masked
+  # vmtest:spot, cover_deficit minted nothing for the mask TTL, and
+  # the scenario's 60s Registered-wait timed out staring at
+  # `items: []` (the vm-sla-sizing-kwok strike-1 flake). Dominance,
+  # re-derived per consumer (grace = 2 x ${kwokLeadTimeSeed}):
+  #   vm-sla-sizing-kwok:    slaSizingRegBudget = ownedWait+regWait+10 < grace
+  #   vm-backlog-floor-kwok: 2×regWait+10 < grace
+  #     — both ASSERTED at their respective call sites so a SEED
+  #     SHRINK fails eval, not flakes. Wait-widen coverage is
+  #     symmetric: both scenarios thread their wait budgets from the
+  #     bindings above, so widening either fails eval.
+  # so the reap structurally cannot fire while either scenario's
+  # waits run.
+  #
+  # SHARED CONSTRAINT: vm-backlog-floor-kwok also reads
+  # leadTimeSeed=130 — CellSketches::seed injects N_SEED=10 copies
+  # into boot_active so 8 real ~5s KWOK boots cannot pull boot-p50
+  # below 130, giving an effective na_threshold floor of
+  # max(boot_median/2, minConsolidationTime) = ~65s and the
+  # scenario's 80s exposure budget. Changing the seed must satisfy
+  # BOTH the per-consumer dominance bounds above AND the
+  # backlog-floor exposure arithmetic at the vm-backlog-floor-kwok
+  # override comment.
+  kwokNodeclaimPoolValues =
+    let
+      # CHECKED MIRROR of values.yaml's hwClasses key-set — the
+      # kwok-prodHw-drift check (nix/misc-checks.nix) reds CI when
+      # this literal and `yq '.scheduler.sla.hwClasses|keys'` over
+      # values.yaml disagree, so the prod hwClass list stays
+      # single-sourced without IFD. The previous unchecked hand-list
+      # had drifted 12→20 (g7/metal/fetcher added) and the merged
+      # config silently kept 9 hwClasses while the comment claimed
+      # {vmtest}; the briefly-shipped IFD form (9dd33a8c) fixed the
+      # drift but blocked eval of the two KWOK checks behind a build.
+      prodHw = import ./fixtures/kwok-prod-hw.nix;
+      # Over-null: every {h}×{spot,od} regardless of capacity_types —
+      # nulling a non-existent leadTimeSeed key is a Helm-coalesce
+      # no-op, so this is correct without reading capacityTypes.
+      prodCells = pkgs.lib.concatMap (h: [
+        "${h}:spot"
+        "${h}:od"
+      ]) prodHw;
+      nullKeys = indent: ks: pkgs.lib.concatMapStringsSep "\n" (k: "${indent}\"${k}\": null") ks;
+    in
+    # `[sla]` vmtest-only. Per-subkey nulls wipe every prod hwClass +
+    # every {h}×{spot,od} leadTimeSeed cell from chart defaults so
+    # leadTimeSeed / hwClasses key-sets all = {vmtest}.
+    # max_fleet_cores capped at 64 so a runaway tick can't request
+    # more than the KWOK fixture synthesizes. Colon in `vmtest:spot`
+    # cell key needs YAML key-quoting.
+    pkgs.writeText "kwok-nodeclaim-pool.yaml" ''
+      scheduler:
+        sla:
+          maxFleetCores: 64
+          maxNodeClaimsPerCellPerTick: 4
+          hwClasses:
+      ${nullKeys "      " prodHw}
+            vmtest:
+              nodeClass: rio-default
+              maxCores: 16
+              maxMem: 2147483648
+              labels:
+                - {key: rio.build/vmtest, value: "true"}
+              requirements:
+                - {key: kubernetes.io/os, operator: In, values: [linux]}
+          referenceHwClass: vmtest
+          leadTimeSeed:
+      ${nullKeys "      " prodCells}
+            "vmtest:spot": ${toString kwokLeadTimeSeed}.0
+            "vmtest:od": ${toString kwokLeadTimeSeed}.0
+    '';
   mountd = import ./scenarios/mountd.nix;
   # castore-fuse exports { fuseClientModule, mkTest } — the client VM
   # doubles as the FUSE/mountd machine, so the node config and the
@@ -1385,104 +1520,92 @@ in
   # r[verify ctrl.nodeclaim.anchor-bulk+7]
   # r[verify ctrl.nodeclaim.priority-bucket]
   # r[verify ctrl.nodeclaim.placeable-gate+5]
-  vm-sla-sizing-kwok = forecast-provisioning {
-    inherit pkgs common;
-    fixture = k3sFull {
-      extraImages = kwok.airgapImages;
-      extraManifests = kwok.manifests;
-      extraValuesTyped = {
-        "buildScheduler.enabled" = true;
+  vm-sla-sizing-kwok =
+    # Eval-time coupling of the unregistered-reap grace
+    # (`2×leadTimeSeed`) to this scenario's registration-wait budget
+    # — same shape as vm-backlog-floor-kwok's assert below.
+    assert kwokDominanceAssert "vm-sla-sizing-kwok" slaSizingRegBudget
+      "raise kwokLeadTimeSeed or lower slaSizingOwnedWait/slaSizingRegWait";
+    forecast-provisioning {
+      inherit pkgs common;
+      ownedWaitSecs = slaSizingOwnedWait;
+      regWaitSecs = slaSizingRegWait;
+      fixture = k3sFull {
+        extraImages = kwok.airgapImages;
+        extraManifests = kwok.manifests;
+        extraValuesTyped = {
+          "buildScheduler.enabled" = true;
+        };
+        extraValues = {
+          "buildScheduler.image" = kwok.kubeSchedulerRef;
+        };
+        extraValuesFiles = [ kwokNodeclaimPoolValues ];
       };
-      extraValues = {
-        "buildScheduler.image" = kwok.kubeSchedulerRef;
-      };
-      extraValuesFiles =
-        let
-          # B16: Helm deep-merges values.yaml's 12 hwClasses + 24-cell
-          # leadTimeSeed with vmtest-full.yaml's `vmtest`,
-          # giving 13 hwClasses. The scheduler's solve_full draws
-          # SpawnIntent.hw_class_names from that 13-set excluding
-          # `vmtest`; `assign_to_cells` then never produces a
-          # `vmtest:spot` key and cover_deficit emits created=0. Helm
-          # only honours `null` deletion against CHART values.yaml (not
-          # prior `-f` files), so a whole-map `hwClasses: null` in one
-          # file followed by `hwClasses: {vmtest:...}` in the next
-          # coalesces to `{vmtest:...}` user-side then deep-merges back
-          # to 13 against chart defaults. Per-subkey nulls are the only
-          # way to delete chart-default map entries while keeping
-          # `vmtest` — generated here so the prod hwClass list stays
-          # single-sourced.
-          prodHw = [
-            "hi-nvme-x86"
-            "hi-nvme-arm"
-            "hi-ebs-x86"
-            "hi-ebs-arm"
-            "mid-nvme-x86"
-            "mid-nvme-arm"
-            "mid-ebs-x86"
-            "mid-ebs-arm"
-            "lo-nvme-x86"
-            "lo-nvme-arm"
-            "lo-ebs-x86"
-            "lo-ebs-arm"
-          ];
-          prodCells = pkgs.lib.concatMap (h: [
-            "${h}:spot"
-            "${h}:od"
-          ]) prodHw;
-          nullKeys = indent: ks: pkgs.lib.concatMapStringsSep "\n" (k: "${indent}\"${k}\": null") ks;
-        in
-        [
-          # `[sla]` vmtest-only. Per-subkey nulls wipe the 12 prod
-          # hwClasses + 24 prod leadTimeSeed cells from chart defaults
-          # so leadTimeSeed / hwClasses key-sets all = {vmtest}.
-          # max_fleet_cores capped at 64 so a
-          # runaway tick can't request more than the KWOK fixture
-          # synthesizes. Colon in `vmtest:spot` cell key needs YAML
-          # key-quoting.
-          #
-          # leadTimeSeed = 120 (NOT kwok's ~5s nominal boot): the seed
-          # feeds health::classify's unregistered-reap grace
-          # (`2 x seed`), and the grace must STRICTLY DOMINATE the
-          # scenario's registration-wait budget or the reaper races
-          # the waits under load. With the old 5.0 the grace was 10s
-          # while KWOK's Stage reconcile can stall past it under
-          # full-gate builder load: the controller (correctly, per its
-          # predicate — same-frame `age > 2 x seed` arithmetic) reaped
-          # the unregistered claim, the BootTimeout reap ICE-masked
-          # vmtest:spot, cover_deficit minted nothing for the mask
-          # TTL, and the scenario's 60s Registered-wait timed out
-          # staring at `items: []` (the vm-sla-sizing-kwok strike-1
-          # flake). Dominance: grace 2 x 120 = 240s > 90 (creation
-          # wait) + 60 (Registered wait) + 10 (tick) = 160s worst
-          # case, so the reap structurally cannot fire while either
-          # wait runs. The scenario is explicitly timing-insensitive
-          # ("asserts CREATED + PROGRESSED + metric pipeline, not
-          # specific timings"), so nothing else reads the seed.
-          (pkgs.writeText "kwok-nodeclaim-pool.yaml" ''
+    };
+
+  # ctrl.nodeclaim.backlog-floor end-to-end under KWOK. Hourglass
+  # `>-<` DAG (derivations/hourglass.nix): Phase A `wide` (8 leaves)
+  # mints 8 NodeClaims; Phase B `tails` (1 neck + 8 Queued) holds
+  # warm_floor=8 through the bottleneck — reap_idle must delete 0.
+  # Reuses the KWOK fixture overlay shape from vm-sla-sizing-kwok
+  # verbatim (kwokNodeclaimPoolValues); the second values file
+  # overrides only the floor knobs.
+  #
+  # r[verify ctrl.nodeclaim.backlog-floor]
+  # r[verify obs.metric.backlog-floor]
+  vm-backlog-floor-kwok =
+    # Eval-time coupling of the unregistered-reap grace
+    # (`2×leadTimeSeed`) to this scenario's registration-wait budget
+    # (two regWaitSecs waits + 10s nominal controller-tick). Fails
+    # eval — not flakes — when a future regWait widen or seed shrink
+    # erodes the margin.
+    assert kwokDominanceAssert "vm-backlog-floor-kwok" backlogFloorRegBudget
+      "raise kwokLeadTimeSeed or lower backlogFloorRegWait";
+    backlog-floor {
+      inherit pkgs common;
+      regWaitSecs = backlogFloorRegWait;
+      fixture = k3sFull {
+        extraImages = kwok.airgapImages;
+        extraManifests = kwok.manifests;
+        extraValuesTyped = {
+          "buildScheduler.enabled" = true;
+        };
+        extraValues = {
+          "buildScheduler.image" = kwok.kubeSchedulerRef;
+        };
+        extraValuesFiles = [
+          kwokNodeclaimPoolValues
+          # backlogFloorCapRatio=1.0 (chart default 0.0 disables the
+          # floor — the T3 carry-forward). minConsolidationTime "*"=30
+          # is the policy floor — the EFFECTIVE na_threshold floor is
+          # max(boot_median/2, 30) ≈ 65s here because
+          # CellSketches::seed injects N_SEED=10 copies of
+          # leadTimeSeed=130 into boot_active and 8 real ~5s KWOK
+          # boots cannot pull the p50 below 130 (the scenario budgets
+          # an 80s exposure for this). 30 (not 5) so the
+          # pending_by_system staleness bound `2 × min_consolidation =
+          # 60s` strictly dominates the 10s controller-poll tick under
+          # load — at 5s the bound is 10s and a single laggy poll
+          # zeroes the floor. maxCores=4 (= probe.cpu floor) so
+          # sizing()'s n_lo = ⌈8×4/4⌉ = 8 → one NodeClaim per Phase-A
+          # intent; maxNodeClaimsPerCellPerTick=8 so all 8 land on
+          # tick 1.
+          (pkgs.writeText "backlog-floor.yaml" ''
             scheduler:
               sla:
-                maxFleetCores: 64
-                maxNodeClaimsPerCellPerTick: 4
+                maxNodeClaimsPerCellPerTick: 8
                 hwClasses:
-            ${nullKeys "      " prodHw}
                   vmtest:
-                    nodeClass: rio-default
-                    maxCores: 16
-                    maxMem: 2147483648
-                    labels:
-                      - {key: rio.build/vmtest, value: "true"}
-                    requirements:
-                      - {key: kubernetes.io/os, operator: In, values: [linux]}
-                referenceHwClass: vmtest
-                leadTimeSeed:
-            ${nullKeys "      " prodCells}
-                  "vmtest:spot": 120.0
-                  "vmtest:od": 120.0
+                    maxCores: 4
+            karpenter:
+              nodeclaimPool:
+                minConsolidationTime:
+                  "*": 30.0
+                backlogFloorCapRatio: 1.0
           '')
         ];
+      };
     };
-  };
 
   # ── substitute-scale ─────────────────────────────────────────────────
   #   Substitution → autoscaling-signal path. 30-leaf substitutable

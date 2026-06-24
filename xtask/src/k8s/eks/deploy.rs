@@ -848,15 +848,18 @@ const STORE_PG_HEADROOM: f64 = 0.70;
 /// divisor cannot drift.
 const STORE_CPU_REQUEST: u32 = 16;
 
-/// The chart's `karpenter.nodePools[rio-general]` instance-family pin
-/// (values.yaml). `store_pool_cpu_limit` BAILS if the chart moves
-/// outside this set, because `GENERAL_NODE_VCPU_LADDER` below is
-/// derived from these families — a family change must re-derive the
-/// ladder, not silently divide by the wrong node shape.
-const GENERAL_POOL_FAMILIES: &[&str] = &["c8a", "m8a", "r8a"];
+/// The chart's `karpenter.nodePools[rio-{general,store}]`
+/// instance-family pin (values.yaml). `store_pool_cpu_limit` BAILS if
+/// the chart moves outside this set, because
+/// `GENERAL_NODE_VCPU_LADDER` below is derived from these families — a
+/// family change must re-derive the ladder, not silently divide by the
+/// wrong node shape. live_101: rio-store widened to +gen-7a; the AMD
+/// gen-7a and gen-8a families share the same large..48xlarge vCPU
+/// ladder, so the derived ladder is unchanged.
+const GENERAL_POOL_FAMILIES: &[&str] = &["c7a", "c8a", "m7a", "m8a", "r7a", "r8a"];
 
-/// vCPU sizes of the rio-general families (c8a/m8a/r8a share the AMD
-/// gen-8 ladder: large..48xlarge). The hostable arm needs the NODE
+/// vCPU sizes of the rio-general/rio-store families (AMD gen-7a/8a
+/// share the same ladder: large..48xlarge). The hostable arm needs the NODE
 /// shape, not the pod request: store placement is required
 /// one-replica-per-node podAntiAffinity (store.yaml), and Karpenter
 /// counts the minted node's full capacity against the pool's

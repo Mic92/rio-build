@@ -186,7 +186,16 @@ fn hold_open_threshold(na: f64, max: Option<f64>) -> f64 {
 /// agnostic-fallback gate is "at least one non-trivial constraint
 /// axis" — `arch=None ∧ features=[]` is unroutable; `arch=None ∧
 /// features=[fetcher]` is the `system="builtin"` FOD case (features
-/// route, `matches_arch(_, None)` passes through). Pre-B1 this
+/// route, `matches_arch(_, None)` passes through). NB `matches_arch`
+/// also returns `true` when the hw-class itself carries NO
+/// `kubernetes.io/arch` label (`is_none_or` on the find), so an
+/// arch-label-less class is credited with backlog from every
+/// `*-linux` system with no second gate — accepted: every chart
+/// `values.yaml` hw-class carries the arch label; the KWOK `vmtest`
+/// fixture class does NOT (single-arch VM, so the over-credit is
+/// vacuous there — a multi-arch vmtest scenario would need to add
+/// the label); the scheduler's symmetric `class_routes` makes the
+/// same agnostic-class assumption. Pre-B1 this
 /// `is_some_and(|a| ...)` short-circuit dropped builtin FODs, so a
 /// fetcher cell whose only demand is builtin FODs read as zero
 /// placeable → `reap_idle` reaped it.
@@ -256,6 +265,127 @@ pub fn cell_admits(
         })
 }
 
+/// Arch-only `(system, cell)` admission — the [`cell_admits`] sibling
+/// for callers that have a bare `system` string with no
+/// hw_class/features (a Queued drv has not been `solve_intent_for`'d).
+/// Routes `system_to_arch(system) → arch_admits(&cell.0, arch)` only:
+/// NO `features_compatible` term, because `features_compatible([], P)`
+/// is FALSE when `P≠[]` (rio-common/src/k8s.rs:104 bidirectional-∅
+/// guard) — a synthetic empty-features intent through [`cell_admits`]
+/// would read `pending_for_cell == 0` on every kvm-providing builder
+/// cell, defeating the warm-floor on exactly the cells the 6d8ee5182
+/// incident hit. `system="builtin"` → `arch=None` → unroutable →
+/// contributes 0 (a builtin-FOD backlog cannot be arch-attributed
+/// without feature info the Queued layer does not carry — WONTFIX,
+/// fetcher cells fall back to the NA-threshold floor).
+///
+/// System allowlist: a NodeClaim cell is a Linux k8s node serving
+/// one of `{x86_64, aarch64, i686}-linux` (the systems builder
+/// hw-classes actually run; i686 via amd64's native compat mode).
+/// Everything else contributes 0 — no rio NodeClaim can serve it,
+/// and crediting it is over-hold WITHOUT bound (the cell
+/// structurally cannot drain the work). The allowlist closes the
+/// over-credit family at three observed members and stops it growing
+/// on the next exotic system string:
+///   - darwin/freebsd (non-linux OS — off-k8s executors);
+///   - armv7l/armv6l-linux ([`system_to_arch`] → `arm64`, but
+///     Graviton/most cloud arm64 lack aarch32 EL0);
+///   - the fetcher exclusion (prod `arch_admits` term, below).
+///
+/// bug_058 second-strike: this is NOT a third admission-predicate body
+/// (no `SpawnIntent` to inspect). The `cell_admits_census` test pins
+/// the [`cell_admits`] body-count at 1 (unchanged) and adds a separate
+/// counted row for this arch-only sibling.
+pub fn cell_admits_system(
+    system: &str,
+    hw: &str,
+    arch_admits: &impl Fn(&str, Option<&str>) -> bool,
+) -> bool {
+    // Allowlist gate first: `system_to_arch` is arch-only (strips at
+    // first `-`), so OS and 32-bit-ARM would otherwise route by the
+    // CPU-arch column alone. All three allowlisted systems map to
+    // `Some` via `system_to_k8s_arch`, so no `is_some()` guard.
+    if !matches!(system, "x86_64-linux" | "aarch64-linux" | "i686-linux") {
+        return false;
+    }
+    arch_admits(hw, system_to_arch(system))
+}
+
+/// Σ `pending_by_system` over systems this cell arch-admits — the
+/// backlog-floor signal's per-cell partition. Same many-to-many
+/// routing as [`placeable_for_cell`]: one system credited to every
+/// admitting cell (over-hold, never under-hold — design §3.4). A
+/// 543-x86 backlog credits `mid-ebs-x86:spot` AND `mid-ebs-x86:od`
+/// — but NOT `fetcher-x86:*`: the prod `arch_admits` closure
+/// (mod.rs) is `HwClassConfig::admits_builder_backlog`
+/// (`matches_arch ∧ ¬is_fetcher_class`), because a fetcher
+/// cell structurally cannot receive builder work (NoSchedule taint +
+/// `features_compatible` bidirectional-∅ guard) and crediting it is
+/// over-hold without bound, not bounded over-hold. Cost-side
+/// over-hold only, bounded by `min(pending, live_registered)` per
+/// cell.
+///
+/// Takes `hw: &str` (NOT `&Cell`): CapacityType-invariance is
+/// structural — Spot and OnDemand of the same hw cannot diverge
+/// because the function cannot SEE the capacity type. The Phase-0
+/// `pending_memo: HashMap<&str,u64>` keys on this signature.
+// r[impl ctrl.nodeclaim.backlog-floor]
+pub fn pending_for_cell(
+    pending: &HashMap<String, u64>,
+    hw: &str,
+    arch_admits: &impl Fn(&str, Option<&str>) -> bool,
+) -> u64 {
+    pending
+        .iter()
+        .filter(|(sys, _)| cell_admits_system(sys, hw, arch_admits))
+        .map(|(_, &n)| n)
+        .sum()
+}
+
+/// Per-cell warm-floor formula — the Phase-0 loop body of [`reap_idle`]
+/// extracted for direct table testing (see `tests::warm_floor_table`):
+/// `min(raw_pending, ⌈live_registered × cap_ratio⌉)`. The
+/// `fresh → 0` gate lives at the caller (one prod callsite, which
+/// already computes `fresh`); threading it as a 4th param only added
+/// `if !fresh { return 0 }` of surface.
+/// `cap_ratio ∈ {0.0} ∪ [0.001, 1.0]` is a `Config::validate()`
+/// invariant (debug-asserted here); out-of-range / NaN / sub-‰ nonzero
+/// never reach this site.
+/// `raw_pending` is the caller's [`pending_for_cell`] result (already
+/// computed for the pre-cap gauge — passed in so the per-cell sum
+/// runs once, not twice). Takes the bare `cap_ratio` (not the whole
+/// `&NodeClaimPoolConfig`) — it is the only config field read.
+pub(super) fn compute_warm_floor_for(
+    raw_pending: u64,
+    live_registered: u64,
+    cap_ratio: f64,
+) -> u64 {
+    // `Config::validate()` rejects NaN / out-of-[0,1] / sub-‰ at boot,
+    // so the ratio is trusted here (was guarded per-tick — wrong
+    // altitude for an immutable field). debug_assert restates the
+    // invariant so a future ctor path that bypasses validate() trips
+    // in tests.
+    debug_assert!(
+        (0.0..=1.0).contains(&cap_ratio) && (cap_ratio == 0.0 || cap_ratio >= 0.001),
+        "backlog_floor_cap_ratio outside {{0.0}} ∪ [0.001, 1.0] reached \
+         read site — Config::validate() should have rejected {cap_ratio}"
+    );
+    // Integer-math ⌈live × ratio⌉ at milli-precision. The naive
+    // `(live as f64 * cap_ratio).ceil() as u64` lands non-dyadic
+    // products at N+ε so ceil yields N+1: `(50*0.14).ceil()=8` not 7.
+    // The ratio is operator-set (helm `backlogFloorCapRatio`, rendered
+    // via `rio.requiredFloatTOML` — full precision, always a TOML
+    // float literal); milli-precision matches the spec/doc
+    // `⌈registered × ratio⌉` exactly for any 3-decimal-place input.
+    // That precondition is `Config::validate()`-enforced (>3dp rejected
+    // via the same milli round-trip), as is sub-‰ nonzero
+    // (0.0<r<0.001), so the round cannot land on 0 for a nonzero ratio
+    // and a 4th-dp tie cannot quantise high — helm and direct-TOML
+    // agree on validate feedback (loud reject, never silent round).
+    let ratio_milli = (cap_ratio * 1000.0).round() as u64;
+    raw_pending.min((live_registered * ratio_milli).div_ceil(1000))
+}
+
 /// Append `e` to `cell`'s ring-buffered `idle_gap_events`.
 pub(super) fn push_idle_gap(sketches: &mut CellSketches, cell: &Cell, e: IdleGapEvent) {
     let evs = &mut sketches.cell_mut(cell).idle_gap_events;
@@ -274,6 +404,11 @@ pub(super) fn push_idle_gap(sketches: &mut CellSketches, cell: &Cell, e: IdleGap
 /// per bug_006); a live node carrying an unconfigured cell (mid-rollout
 /// drift) gets one derived on demand.
 struct CellCtx {
+    /// `cell.to_string()` — the metric label. Phase-0 builds one per
+    /// cell; the per-node loop's gauge/counter emits clone this instead
+    /// of re-running `Display` per candidate (~|live| fmts/tick before
+    /// the fold).
+    label: String,
     /// Idle-gap events for the cell. Cloned: the `&` borrow into
     /// `CellSketches` cannot span the mutating reap loop
     /// (`push_idle_gap` takes `&mut`). ≤`IDLE_GAP_RING` (256) events
@@ -292,8 +427,16 @@ struct CellCtx {
     cell_deferred: Vec<SpawnIntent>,
     /// `q_0.5(boot[cell])`, or `cfg.seed_for(cell)` for a cold cell.
     boot_median: f64,
-    /// Per-class operator floor (`minConsolidationTime`).
+    /// Per-class operator floor (`minConsolidationTime`). Phase-0's
+    /// per-cell `stale_after` bound reads THIS (not a second
+    /// `min_consolidation_time_for` glob walk).
     min: Option<f64>,
+    /// Phase-0's [`compute_warm_floor_for`] result for this cell — the
+    /// per-node floor gate reads it directly (was a parallel
+    /// `HashMap<Cell, u64>` keyed identically to `cell_ctx`; folding it
+    /// here drops the second map + per-candidate hash). `0` for cells
+    /// derived on demand outside `all_cells` (no gauge series, no floor).
+    floor: u64,
 }
 
 impl CellCtx {
@@ -306,6 +449,7 @@ impl CellCtx {
         hw_admits: &impl Fn(&str, Option<&str>, &[String]) -> bool,
     ) -> Self {
         Self {
+            label: cell.to_string(),
             events: sketches
                 .get(cell)
                 .map(|s| s.idle_gap_events.clone())
@@ -317,6 +461,7 @@ impl CellCtx {
                 .and_then(|s| s.boot_median())
                 .unwrap_or_else(|| cfg.seed_for(cell)),
             min: cfg.min_consolidation_time_for(cell),
+            floor: 0,
         }
     }
 
@@ -345,13 +490,28 @@ impl CellCtx {
 /// at the callsite (mutable state vs. read-only context) and the
 /// signature stays inside the `too_many_arguments` budget after the
 /// r37 bug_006 `all_cells` addition.
-pub struct ReapInputs<'a, F: Fn(&str, Option<&str>, &[String]) -> bool> {
+pub struct ReapInputs<
+    'a,
+    F: Fn(&str, Option<&str>, &[String]) -> bool,
+    A: Fn(&str, Option<&str>) -> bool,
+> {
     /// FFD placements for this tick (`reserved` + per-cell partition).
     pub placeable: &'a [Placement],
     /// This tick's window-deferred intents (round-10 merged_bug_012):
     /// demand the NA keep-condition counts; never `reserved` (a
     /// deferred intent has no node).
     pub deferred: &'a [SpawnIntent],
+    /// Backlog-floor signal (`ctrl.nodeclaim.backlog-floor`): per-system
+    /// count of `status==Queued` drvs from `GetSpawnIntentsResponse.
+    /// pending_by_system` (proto field 7). Coherent with
+    /// `placeable`/`deferred` (same poll). `consolidate_only` callers
+    /// pass the cached `last_pending_by_system`; staleness-bounded by
+    /// `pending_at` in Phase-0. Empty map → floor=0 → pre-floor reap
+    /// semantics (Q6-additive degradation).
+    pub pending_by_system: &'a HashMap<String, u64>,
+    /// Epoch-secs at which `pending_by_system` was produced. `0.0` =
+    /// never → infinitely stale → floor=0.
+    pub pending_at: f64,
     /// The gauge-reset and per-cell precompute key set. r37 bug_006:
     /// every cell needs a write. r42 bug_023: callers pass the
     /// `gauge_universe` set (configured ∪ live ∪ trailing) so a cell
@@ -366,6 +526,14 @@ pub struct ReapInputs<'a, F: Fn(&str, Option<&str>, &[String]) -> bool> {
     pub prev_idle: &'a HashMap<String, f64>,
     pub cfg: &'a NodeClaimPoolConfig,
     pub hw_admits: F,
+    /// Arch admission for [`pending_for_cell`]:
+    /// `HwClassConfig::admits_builder_backlog` (`matches_arch ∧
+    /// ¬is_fetcher_class`). The `hw_admits` closure includes the
+    /// `features_compatible` term which a system-only key cannot
+    /// satisfy (bidirectional-∅ guard); the fetcher exclusion stops
+    /// builder backlog crediting a cell that structurally cannot
+    /// receive it (over-hold without bound — see [`pending_for_cell`]).
+    pub arch_admits: A,
     pub now_secs: f64,
 }
 
@@ -408,42 +576,142 @@ pub struct ReapIdleOutcome {
 /// admission-eviction sources) and services the tombstone plane for
 /// both lanes alike.
 // r[impl ctrl.pool.delete-outcome]
-pub async fn reap_idle<F: Fn(&str, Option<&str>, &[String]) -> bool>(
+pub async fn reap_idle<
+    F: Fn(&str, Option<&str>, &[String]) -> bool,
+    A: Fn(&str, Option<&str>) -> bool,
+>(
     nodeclaims: &Api<NodeClaim>,
     live: &[LiveNode],
     sketches: &mut CellSketches,
     pass_fence: &crate::reconcilers::fence::MutationFence,
-    inputs: &ReapInputs<'_, F>,
+    inputs: &ReapInputs<'_, F, A>,
 ) -> anyhow::Result<ReapIdleOutcome> {
     let ReapInputs {
         placeable,
         deferred,
+        pending_by_system,
+        pending_at,
         all_cells,
         prev_idle,
         cfg,
         hw_admits,
+        arch_admits,
         now_secs,
     } = inputs;
     let now_secs = *now_secs;
+    let pending_by_system = *pending_by_system;
+    let cap_ratio = cfg.backlog_floor_cap_ratio;
     let reserved: HashSet<&str> = placeable.iter().map(|(_, n, _)| n.as_str()).collect();
     let mut out = ReapIdleOutcome::default();
 
+    // Backlog-floor pre-pass: registered ∧ ¬terminating count per cell
+    // — the `min(pending, live × cap_ratio)` cap operand AND the
+    // running tally the floor check decrements on each completed
+    // delete. Busy and `reserved` nodes ARE counted (they are held
+    // capacity); they are skipped at the per-node filters below
+    // without decrementing, so they count toward the floor permanently
+    // this tick. Phase-0 reads `remaining` BEFORE any decrement, so it
+    // is the live-registered count there — no separate map needed.
+    //
+    // Gated on `cap_ratio > 0.0`: at the shipped helm default (0.0)
+    // the floor is identically 0 and the gate `remaining[cell] ≤ 0`
+    // is unreachable (the candidate is registered_live ⇒ remaining≥1),
+    // so the |live| pre-pass + |reap| HashMap ops are provably-dead
+    // bookkeeping at the documented step-3 read-only-verify posture.
+    // The Phase-0 `backlog_pending`/`warm_floor` gauge zero-writes
+    // stay unconditional (step-3's whole point is observing the signal
+    // with the floor disabled).
+    let floor_active = cap_ratio > 0.0;
+    let mut remaining: HashMap<Cell, u64> = HashMap::new();
+    if floor_active {
+        for n in live {
+            if n.is_registered_live()
+                && let Some(c) = n.cell.as_ref()
+            {
+                rio_common::bump_count(&mut remaining, c);
+            }
+        }
+    }
+    // Per-cell staleness bound (design §4.4): `pending_by_system` is
+    // ignored when older than `max_consolidation_time` (or `2 ×
+    // min_consolidation_time_for(cell)` when unset, or 600s when
+    // neither resolves — the double-None hard fallback). NB:
+    // wall-clock delta — in `reconcile_once` `now_secs == pending_at`
+    // (delta ≡ 0, immune); only `consolidate_only` reads a cached
+    // `pending_at`. Exposure (both directions) requires the
+    // conjunction (scheduler unreachable ∧ large wall-clock step):
+    //   FORWARD step > stale_after → delta jumps past the bound →
+    //     `fresh=false` zeroes the floor mid-backlog (one consolidate
+    //     burst until the next successful poll re-stamps).
+    //   BACKWARD step past `pending_at` → raw delta negative; the
+    //     `.max(0.0)` clamp below makes it 0.0 (= "fresh") instead of
+    //     `-N <= bound` (trivially true) — which would treat the cache
+    //     fresh forever (until wall-clock catches back up), holding the
+    //     floor on backlog data of unbounded real age. The clamp
+    //     trades that for "fresh until the clock catches up to
+    //     pending_at + stale_after", which is the same forward-step
+    //     exposure shape.
+    // Accepted: the structural fix is an `Instant`-stamped
+    // `pending_at` (TODO if the conjunction is ever observed).
+    //
+    // Hoisted out of the per-cell loop: `delta` is loop-invariant. The
+    // bound (`stale_after`) is NOT — it stays per-cell when
+    // `max_consolidation_time` is unset (reads `ctx.min` — the glob
+    // walk `CellCtx::new` already paid). The `reconcile_once` caller
+    // has `delta ≡ 0.0` (its own comment notes `now_secs ==
+    // pending_at`) so `fresh ≡ true` and that per-cell read is dead
+    // work there — short-circuit on `delta == 0.0`. Only
+    // `consolidate_only` with `max=None` pays the per-cell lookup.
+    let delta = (now_secs - *pending_at).max(0.0);
+    let stale_after = |min: Option<f64>| -> f64 {
+        cfg.max_consolidation_time.unwrap_or_else(|| {
+            NodeClaimPoolConfig::STALE_BACKLOG_FACTOR
+                * min.unwrap_or(NodeClaimPoolConfig::MIN_CONSOLIDATION_TIME_FALLBACK_SECS)
+        })
+    };
+
     // Phase 0: per-cell context, computed once per cell. r37 bug_006:
-    // iterate all_cells so a cell with no idle/registered/unreserved
-    // nodes gets a 0 gauge write instead of staling at the last value
-    // (matches `emit_live_gauges`'s `cfg.all_cells()` convention and
-    // `lib.rs` describe_gauge!'s "0 when no idle nodes" promise).
+    // iterate all_cells so every cell gets a 0 gauge write. The
+    // warm_floor and backlog_pending gauges follow the same zero-write
+    // convention.
     let mut cell_ctx: HashMap<Cell, CellCtx> = HashMap::with_capacity(all_cells.len());
+    // `pending_for_cell` is CapacityType-invariant by signature (takes
+    // `hw: &str`, not `&Cell`), so memoise by hw-class: every hw with
+    // both capacity types would otherwise pay two identical full walks
+    // of `pending_by_system`, each re-incurring the prod `arch_admits`
+    // closure's `classes.read()`+linear-scan.
+    let mut pending_memo: HashMap<&str, u64> = HashMap::new();
     for cell in *all_cells {
+        let mut ctx = CellCtx::new(cell, placeable, deferred, sketches, cfg, hw_admits);
         metrics::gauge!(
             "rio_controller_nodeclaim_consolidate_threshold_seconds",
-            "cell" => cell.to_string(),
+            "cell" => ctx.label.clone(),
         )
         .set(0.0);
-        cell_ctx.insert(
-            cell.clone(),
-            CellCtx::new(cell, placeable, deferred, sketches, cfg, hw_admits),
-        );
+        let lr = remaining.get(cell).copied().unwrap_or(0);
+        let raw_pending = *pending_memo
+            .entry(cell.0.as_str())
+            .or_insert_with(|| pending_for_cell(pending_by_system, &cell.0, arch_admits));
+        // Pre-cap gauge so rollout step 3 (read-only verify at
+        // cap_ratio=0.0) can observe the signal:
+        metrics::gauge!(
+            "rio_controller_nodeclaim_backlog_pending",
+            "cell" => ctx.label.clone(),
+        )
+        .set(raw_pending as f64);
+        // r[impl ctrl.nodeclaim.backlog-floor]
+        let fresh = delta == 0.0 || delta <= stale_after(ctx.min);
+        ctx.floor = if fresh {
+            compute_warm_floor_for(raw_pending, lr, cap_ratio)
+        } else {
+            0
+        };
+        metrics::gauge!(
+            "rio_controller_nodeclaim_warm_floor",
+            "cell" => ctx.label.clone(),
+        )
+        .set(ctx.floor as f64);
+        cell_ctx.insert(cell.clone(), ctx);
     }
 
     for n in live {
@@ -454,8 +722,12 @@ pub async fn reap_idle<F: Fn(&str, Option<&str>, &[String]) -> bool>(
         // problem. A second `delete` is idempotent (404-tolerated) but
         // would double-increment `nodeclaim_reaped_total` and double-
         // push the censored `IdleGapEvent`, biasing the NA-model
-        // arrival rate low.
-        if n.terminating() || !n.registered || reserved.contains(n.name.as_str()) {
+        // arrival rate low. Routes through [`LiveNode::is_registered_
+        // live`] so this candidate filter and the `remaining` pre-pass
+        // (line ~580) and post-delete decrement read the same
+        // predicate — when it tightens (e.g. exclude cordoned), both
+        // halves of the floor-accounting invariant move together.
+        if !n.is_registered_live() || reserved.contains(n.name.as_str()) {
             continue;
         }
         // r42 bug_020: idle = `now − prev_idle[name]`, the
@@ -478,6 +750,15 @@ pub async fn reap_idle<F: Fn(&str, Option<&str>, &[String]) -> bool>(
                 cell.clone(),
                 CellCtx::new(cell, placeable, deferred, sketches, cfg, hw_admits),
             );
+            // gauge_universe already includes `live` cells so this
+            // branch is near-unreachable. NO gauge write here — the
+            // cell is by definition not in `all_cells` and the
+            // gauge_universe convention says it gets no series.
+            // `ctx.floor == 0` (the `CellCtx::new` default) so the
+            // floor gate `remaining ≤ 0` is unreachable for it
+            // (`remaining` is provably ≥1 — reaching here requires
+            // registered ∧ ¬terminating ∧ cell.is_some(), exactly the
+            // pre-pass predicate that wrote it).
         }
         let ctx = &cell_ctx[cell];
         // r37 bug_009: hold-open and non-hold-open read the SAME
@@ -511,12 +792,38 @@ pub async fn reap_idle<F: Fn(&str, Option<&str>, &[String]) -> bool>(
         // minConsolidationTime entry says 300/600s = the prefix-glob
         // didn't match.
         // r[impl obs.metric.consolidate-threshold]
+        // `ctx.label` was built once in Phase-0; the per-node loop
+        // clones the same `String` for both emits below (|cells|
+        // Display fmts/tick instead of |live|).
         metrics::gauge!(
             "rio_controller_nodeclaim_consolidate_threshold_seconds",
-            "cell" => cell.to_string(),
+            "cell" => ctx.label.clone(),
         )
         .set(threshold);
         if idle <= threshold {
+            continue;
+        }
+        // r[impl ctrl.nodeclaim.backlog-floor]
+        // Count-floor: hold this node if reaping it would drop the
+        // cell's registered-non-terminating count below the
+        // backlog-derived floor. Layered AFTER `reserved` (an
+        // FFD-placed node is kept regardless of floor) and AFTER the
+        // NA threshold (a node inside its threshold is already kept;
+        // this only saves nodes the NA model would reap).
+        // TODO: reap-order — with a count-floor, WHICH nodes survive
+        // depends on `live` iteration order. v1 accepts this (strictly
+        // better than "delete all"); follow-up sorts candidates by
+        // `(allocatable.0 asc, idle desc)` so EARLY-iterated
+        // (reaped-first) are smallest/longest-idle and the floor's
+        // SURVIVORS are largest / most-recently-busy
+        // (idle-gap-architecture §4.5).
+        if floor_active && remaining.get(cell).copied().unwrap_or(0) <= ctx.floor {
+            metrics::counter!(
+                "rio_controller_nodeclaim_reap_suppressed_total",
+                "cell" => ctx.label.clone(),
+                "reason" => crate::observability::SUPPRESS_BACKLOG_FLOOR,
+            )
+            .increment(1);
             continue;
         }
         // D4 mutation seam: a deposed pass deletes nothing more.
@@ -580,6 +887,20 @@ pub async fn reap_idle<F: Fn(&str, Option<&str>, &[String]) -> bool>(
                 });
             }
         }
+        // Floor accounting (every delete-attempt outcome decrements):
+        // a COMPLETED delete drops the cell below (the node is gone);
+        // an AMBIGUOUS error decrements pessimistically — the apiserver
+        // may have committed, so a same-tick subsequent delete would
+        // otherwise over-reap below the floor when both did. If the
+        // ambiguous call did NOT commit, the node reappears next tick
+        // and `remaining` recomputes from scratch — one tick of extra
+        // hold (over-hold-never-under-hold, design §3.4). Hoisted after
+        // the exhaustive match so "every outcome decrements" is
+        // structurally self-evident instead of two byte-identical arm
+        // tails.
+        if floor_active && let Some(r) = remaining.get_mut(cell) {
+            *r = r.saturating_sub(1);
+        }
     }
     Ok(out)
 }
@@ -607,23 +928,41 @@ pub fn observe_idle_to_busy(
     sketches: &mut CellSketches,
     now_secs: f64,
 ) {
-    // Terminating nodes excluded from `live_names` AND iteration: a node
-    // that started terminating since last tick should drop from `prev_idle`
-    // WITHOUT recording an event. For `reap_idle`'d nodes the censored
-    // event was pushed at delete time; recording here would double-count.
-    // For `reap_unhealthy`/out-of-band deletes (spot interruption,
-    // `kubectl delete nodeclaim`) the gap is silently dropped — an
-    // unhealthy node's idle history is tainted anyway (the executor
-    // crashed mid-idle), and `reap_unhealthy` takes `&CellSketches`
-    // immutably so it CANNOT push (r38 bug_031).
+    // Non-registered-live nodes excluded from `live_names` AND iteration:
+    // a node that started terminating since last tick should drop from
+    // `prev_idle` WITHOUT recording an event. For `reap_idle`'d nodes the
+    // censored event was pushed at delete time; recording here would
+    // double-count. For `reap_unhealthy`/out-of-band deletes (spot
+    // interruption, `kubectl delete nodeclaim`) the gap is silently
+    // dropped — an unhealthy node's idle history is tainted anyway (the
+    // executor crashed mid-idle), and `reap_unhealthy` takes
+    // `&CellSketches` immutably so it CANNOT push (r38 bug_031).
+    //
+    // The retain filter routes through [`LiveNode::is_registered_live`]
+    // (NOT bare `!terminating()`): `prev_idle` is seeded only for
+    // registered-live nodes (the loop below), so keying retain on a
+    // wider predicate would preserve a stale `since` for a node the
+    // seed loop skips — on re-admission `or_insert(now)` no-ops against
+    // the surviving entry and `reap_idle` fires on first tick. The two
+    // halves use the same predicate so a future tightening (e.g.
+    // exclude cordoned) cannot reopen that seam.
+    //
+    // Counter-case (accepted, over-hold direction): a transient
+    // `Registered` True→Unknown→True flap on an idle non-terminating
+    // node (Karpenter restart / informer staleness) drops its
+    // `prev_idle` entry; on re-read `or_insert(now)` reseeds a fresh
+    // T0, granting one extra `consolidate_after` window. The wider
+    // `!terminating()` retain kept the correct T0 across that flap but
+    // reopened the under-hold above; the under-hold is the correctness
+    // hazard, the over-hold is bounded cost — the safe polarity.
     let live_names: HashSet<&str> = live
         .iter()
-        .filter(|n| !n.terminating())
+        .filter(|n| n.is_registered_live())
         .map(|n| n.name.as_str())
         .collect();
     prev_idle.retain(|name, _| live_names.contains(name.as_str()));
     for n in live {
-        if n.terminating() || !n.registered {
+        if !n.is_registered_live() {
             continue;
         }
         let busy = n.requested.0 > 0;
@@ -1249,11 +1588,13 @@ mod tests {
     fn hold_open_threshold_never_below_non_hold_open_with_max_set() {
         // Fetcher cell shape: boot=30, min=600 → floor=600.
         let ctx = CellCtx {
+            label: String::new(),
             events: vec![],
             cell_placeable: vec![],
             cell_deferred: vec![],
             boot_median: 30.0,
             min: Some(600.0),
+            floor: 0,
         };
         // `Some(300.0)` is the falsifying input the pre-r38 suite never
         // produced: max < floor → na = 600, raw hold-open = 300 < na.
@@ -1390,6 +1731,13 @@ mod tests {
             "cell_admits = one def + the two lane callers; a new \
              (intent, cell) filter lane takes a counted census row here"
         );
+        let sys_calls = prod.matches("cell_admits_system(").count();
+        assert_eq!(
+            sys_calls, 2,
+            "cell_admits_system = one def + the pending_for_cell lane; \
+             a new (system, cell) arch-only filter takes a counted \
+             census row here"
+        );
     }
 
     /// W11-AJ planted red: the strawman one-sided edit — a THIRD
@@ -1497,6 +1845,149 @@ mod tests {
             1,
             "on-demand-only intent IS demand for the on-demand cell"
         );
+    }
+
+    /// `pending_for_cell` many-to-many routing (design §3.4): one
+    /// system credits every arch-admitting cell — over-hold across
+    /// capacity types and hw-classes, never under-hold. Unroutable
+    /// systems (`arch=None` or no admitting hw-class) contribute 0.
+    #[test]
+    fn pending_for_cell_many_to_many() {
+        let pending: HashMap<String, u64> = [
+            ("x86_64-linux".into(), 543),
+            ("aarch64-linux".into(), 7),
+            ("builtin".into(), 99),      // arch=None → unroutable → 0
+            ("riscv64-linux".into(), 5), // unroutable → 0
+        ]
+        .into();
+        let x86_spot = Cell("h-x86".into(), CapacityType::Spot);
+        let x86_od = Cell("h-x86".into(), CapacityType::OnDemand);
+        let arm = Cell("h-arm".into(), CapacityType::Spot);
+        let arch_admits = |h: &str, a: Option<&str>| {
+            matches!((h, a), ("h-x86", Some("amd64")) | ("h-arm", Some("arm64")))
+        };
+        // r[verify ctrl.nodeclaim.backlog-floor]
+        assert_eq!(pending_for_cell(&pending, &x86_spot.0, &arch_admits), 543);
+        // Spot==OD invariance is now structural (`hw: &str` signature
+        // cannot read CapacityType); the explicit assert is kept as
+        // documentation that both cells route identically.
+        assert_eq!(
+            pending_for_cell(&pending, &x86_od.0, &arch_admits),
+            543,
+            "same system credited to spot AND on-demand (over-hold)"
+        );
+        assert_eq!(pending_for_cell(&pending, &arm.0, &arch_admits), 7);
+        assert!(
+            !cell_admits_system("builtin", &x86_spot.0, &arch_admits),
+            "builtin → arch=None → unroutable"
+        );
+    }
+
+    /// Arch-only routing must NOT credit builder Queued backlog to
+    /// fetcher-* cells. fetcher-x86 carries `kubernetes.io/arch=amd64`
+    /// so bare `matches_arch` admits it; the prod `arch_admits` closure
+    /// (mod.rs) is `matches_arch ∧ ¬is_fetcher_class` — a fetcher cell
+    /// structurally cannot receive builder work (NoSchedule taint +
+    /// `features_compatible` bidirectional-∅ guard), so crediting it is
+    /// over-hold WITHOUT bound (the §3.4 "over-hold OK" framing assumes
+    /// the admitting cell can eventually receive the work).
+    // r[verify ctrl.nodeclaim.backlog-floor]
+    #[test]
+    fn pending_for_cell_excludes_fetcher() {
+        let pending: HashMap<String, u64> = [("x86_64-linux".into(), 543)].into();
+        let builder = Cell("mid-ebs-x86".into(), CapacityType::Spot);
+        let fetcher = Cell("fetcher-x86".into(), CapacityType::Spot);
+        // Prod-shape closure: matches_arch ∧ ¬is_fetcher_class. Both
+        // cells carry arch=amd64; only the fetcher provides the
+        // FETCHER_FEATURE sentinel.
+        let is_fetcher = |h: &str| h.starts_with("fetcher-");
+        let arch_admits = |h: &str, a: Option<&str>| a == Some("amd64") && !is_fetcher(h);
+        assert_eq!(pending_for_cell(&pending, &builder.0, &arch_admits), 543);
+        assert_eq!(
+            pending_for_cell(&pending, &fetcher.0, &arch_admits),
+            0,
+            "builder backlog NOT credited to fetcher cells"
+        );
+        // Contrast (the pre-fix shape): bare matches_arch admits both.
+        let bare = |_: &str, a: Option<&str>| a == Some("amd64");
+        assert_eq!(
+            pending_for_cell(&pending, &fetcher.0, &bare),
+            543,
+            "bare matches_arch over-credits — the ¬is_fetcher term is load-bearing"
+        );
+    }
+
+    /// System-allowlist sibling of the fetcher exclusion:
+    /// `system_to_arch` strips everything after the first `-`, so
+    /// without an allowlist `aarch64-darwin` AND `armv7l-linux` map to
+    /// `arm64` and credit Linux arm64 builder cells. A NodeClaim cell
+    /// is a Linux k8s node serving `{x86_64,aarch64,i686}-linux`;
+    /// anything else is structurally unservable there — same
+    /// unbounded-over-hold class. Three observed family members
+    /// (darwin OS, freebsd OS, 32-bit ARM) pinned.
+    // r[verify ctrl.nodeclaim.backlog-floor]
+    #[test]
+    fn pending_for_cell_excludes_non_linux() {
+        let pending: HashMap<String, u64> = [
+            ("aarch64-linux".into(), 100),
+            ("aarch64-darwin".into(), 7),
+            ("x86_64-freebsd".into(), 3),
+            ("armv7l-linux".into(), 11),
+        ]
+        .into();
+        let arm = Cell("h-arm".into(), CapacityType::Spot);
+        let arch_admits = |_: &str, a: Option<&str>| a == Some("arm64");
+        assert!(
+            !cell_admits_system("aarch64-darwin", &arm.0, &arch_admits),
+            "darwin → linux cell rejected on OS axis"
+        );
+        assert!(
+            !cell_admits_system("x86_64-freebsd", &arm.0, &arch_admits),
+            "freebsd → linux cell rejected on OS axis"
+        );
+        assert!(cell_admits_system("aarch64-linux", &arm.0, &arch_admits));
+        assert!(
+            !cell_admits_system("armv7l-linux", &arm.0, &arch_admits),
+            "armv7l → arm64 cell rejected: cloud arm64 lacks aarch32 EL0 \
+             (3rd over-credit family member — allowlist closes it)"
+        );
+        assert_eq!(
+            pending_for_cell(&pending, &arm.0, &arch_admits),
+            100,
+            "only allowlisted backlog is credited; darwin/freebsd/armv7l contribute 0"
+        );
+    }
+
+    /// Table-driven `compute_warm_floor_for` — the per-cell Phase-0
+    /// formula extracted for direct testing. Covers (a) cap-at-live,
+    /// (b) Q6-additive empty-pending → 0, (c) ratio=0.0 disables, plus
+    /// `pending<live`, fractional ratio, no-live edges. The `fresh→0`
+    /// gate is at the caller (no table row).
+    // r[verify ctrl.nodeclaim.backlog-floor]
+    #[test]
+    fn warm_floor_table() {
+        // (raw_pending, live, cap_ratio, expect_floor). The `fresh → 0`
+        // gate is at the caller, not in the formula.
+        for (pend, lr, ratio, want) in [
+            (50, 28, 1.0, 28),  // (a) capped at live
+            (0, 28, 1.0, 0),    // (b) Q6-additive: empty → 0
+            (50, 28, 0.0, 0),   // (c) ratio=0.0 disables
+            (3, 28, 1.0, 3),    // pending < live
+            (50, 28, 0.5, 14),  // 28×0.5 (exact)
+            (50, 3, 0.5, 2),    // ⌈3×0.5⌉ = 2 — exercises .ceil()
+            (50, 50, 0.14, 7),  // non-dyadic: ⌈50×0.14⌉=7 (f64-ceil gave 8)
+            (50, 100, 0.07, 7), // non-dyadic: ⌈100×0.07⌉=7 (f64-ceil gave 8)
+            (50, 25, 0.28, 7),  // non-dyadic: ⌈25×0.28⌉=7 (f64-ceil gave 8)
+            (50, 0, 1.0, 0),    // no live nodes
+            // 1‰ boundary — smallest accepted nonzero: ⌈28 × 0.001⌉ = 1.
+            (50, 28, 0.001, 1),
+            // negative / NaN / sub-‰ nonzero (0.0<r<0.001) are
+            // `Config::validate()`-rejected at boot and debug-asserted
+            // at the read site; no longer reachable table rows.
+        ] {
+            let got = compute_warm_floor_for(pend, lr, ratio);
+            assert_eq!(got, want, "pending={pend} live={lr} ratio={ratio}");
+        }
     }
 
     /// r37 bug_009 (§Permissive-restrictive asymmetry, applied to time):

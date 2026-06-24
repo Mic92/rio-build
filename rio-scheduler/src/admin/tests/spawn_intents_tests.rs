@@ -9,10 +9,14 @@
 use super::*;
 
 // r[verify sched.admin.spawn-intents+2]
+// r[verify obs.metric.spawn-intents-pending]
 /// `[sla]` on: each Ready derivation emits one intent. Proves the gRPC
 /// handler threads `ActorCommand::Admin(AdminQuery::GetSpawnIntents)`
 /// through to the proto response, and that proto3's `optional
-/// ExecutorKind` round-trips (None on the wire = unfiltered).
+/// ExecutorKind` round-trips (None on the wire = unfiltered). Reaches
+/// the `r[impl obs.metric.spawn-intents-pending]` gauge-emission block
+/// in `admin/spawn_intents.rs` (the actor-level deep-backlog test
+/// covers the value semantics; this covers the RPC chokepoint).
 #[tokio::test]
 async fn test_get_spawn_intents_reports_ready() -> anyhow::Result<()> {
     use crate::actor::tests::{make_node, merge_dag, setup_actor_configured, test_sla_config};
