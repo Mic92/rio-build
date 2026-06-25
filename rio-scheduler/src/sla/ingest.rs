@@ -2398,6 +2398,7 @@ mod disk_axis_tests {
             ("config", include_str!("config.rs")),
             ("cost", include_str!("cost.rs")),
             ("dip", include_str!("dip.rs")),
+            ("ec2", include_str!("ec2.rs")),
             ("explain", include_str!("explain.rs")),
             ("explore", include_str!("explore.rs")),
             ("fit", include_str!("fit.rs")),

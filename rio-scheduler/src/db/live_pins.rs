@@ -844,6 +844,7 @@ mod registration_writer_census {
         ("sla/config.rs", include_str!("../sla/config.rs")),
         ("sla/cost.rs", include_str!("../sla/cost.rs")),
         ("sla/dip.rs", include_str!("../sla/dip.rs")),
+        ("sla/ec2.rs", include_str!("../sla/ec2.rs")),
         ("sla/explain.rs", include_str!("../sla/explain.rs")),
         ("sla/explore.rs", include_str!("../sla/explore.rs")),
         ("sla/fit.rs", include_str!("../sla/fit.rs")),

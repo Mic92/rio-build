@@ -69,7 +69,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use aws_sdk_ec2::types::{ArchitectureType, InstanceTypeInfo};
+use super::ec2::InstanceTypeInfo;
 use rio_common::k8s::metal_partition_op;
 use tracing::warn;
 
@@ -206,12 +206,12 @@ impl CatalogEntry {
 /// than match a `(0, 0)` phantom).
 // r[impl scheduler.sla.ceiling.catalog-derived+4]
 pub fn from_instance_type_info(it: &InstanceTypeInfo) -> Option<CatalogEntry> {
-    let name = it.instance_type()?.as_str().to_owned();
-    let cores = it.v_cpu_info()?.default_v_cpus()?;
+    let name = it.instance_type.clone()?;
+    let cores = it.default_vcpus?;
     if cores <= 0 {
         return None;
     }
-    let mem_mib = it.memory_info()?.size_in_mib()?;
+    let mem_mib = it.memory_mib?;
     if mem_mib <= 0 {
         return None;
     }
@@ -253,32 +253,24 @@ fn karpenter_labels(
     // fixtures' `kubernetes.io/os In [linux]` no-op requirement passes
     // the `SYNTHESIZED_LABELS` allowlist truthfully.
     m.insert(label::OS, "linux".to_owned());
-    if let Some(arch) = it
-        .processor_info()
-        .and_then(|p| p.supported_architectures().iter().find_map(k8s_arch))
-    {
+    if let Some(arch) = it.supported_architectures.iter().find_map(|a| k8s_arch(a)) {
         m.insert(label::ARCH, arch.to_owned());
     }
-    if let Some(mfr) = it.processor_info().and_then(|p| p.manufacturer()) {
+    if let Some(mfr) = &it.manufacturer {
         // Karpenter lower-cases the manufacturer (`Intel` → `intel`).
         m.insert(label::CPU_MANUFACTURER, mfr.to_ascii_lowercase());
     }
     // `instance-local-nvme` is total ephemeral storage in GB (Karpenter
     // uses string-encoded integer for `Gt`/`Lt`). Omit-at-0: see
     // [`maybe_nvme_label`].
-    maybe_nvme_label(
-        &mut m,
-        it.instance_storage_info()
-            .and_then(|s| s.total_size_in_gb())
-            .unwrap_or(0),
-    );
+    maybe_nvme_label(&mut m, it.total_storage_gb.unwrap_or(0));
     m
 }
 
-fn k8s_arch(a: &ArchitectureType) -> Option<&'static str> {
+fn k8s_arch(a: &str) -> Option<&'static str> {
     match a {
-        ArchitectureType::X8664 => Some("amd64"),
-        ArchitectureType::Arm64 => Some("arm64"),
+        "x86_64" => Some("amd64"),
+        "arm64" => Some("arm64"),
         _ => None,
     }
 }
@@ -488,26 +480,15 @@ pub fn derive_ceilings(
 /// claim equal to the body in BOTH directions. Best-effort — on API
 /// error return empty (every class falls to global, the uncatalogued
 /// gauge fires per-class, the operator alerts on it).
-pub async fn fetch_catalog(ec2: &aws_sdk_ec2::Client) -> Vec<CatalogEntry> {
-    let mut out = Vec::new();
-    let mut paginator = ec2.describe_instance_types().into_paginator().send();
-    while let Some(page) = paginator.next().await {
-        match page {
-            Ok(p) => {
-                for it in p.instance_types() {
-                    if let Some(e) = from_instance_type_info(it) {
-                        out.push(e);
-                    }
-                }
-            }
-            Err(e) => {
-                warn!(error = %e, "§13c-2: describe_instance_types failed; \
-                       per-class catalog ceilings fall to global");
-                return Vec::new();
-            }
+pub async fn fetch_catalog(ec2: &super::ec2::Client) -> Vec<CatalogEntry> {
+    match ec2.describe_instance_types().await {
+        Ok(rows) => rows.iter().filter_map(from_instance_type_info).collect(),
+        Err(e) => {
+            warn!(error = %e, "§13c-2: describe_instance_types failed; \
+                   per-class catalog ceilings fall to global");
+            Vec::new()
         }
     }
-    out
 }
 
 #[cfg(test)]
@@ -878,17 +859,13 @@ mod tests {
     /// fully-populated InstanceTypeInfo exercises every conditional arm.
     #[test]
     fn synthesized_labels_const_matches_karpenter_labels() {
-        use aws_sdk_ec2::types::{InstanceStorageInfo, ProcessorInfo, VCpuInfo};
-        let it = InstanceTypeInfo::builder()
-            .v_cpu_info(VCpuInfo::builder().default_v_cpus(8).build())
-            .processor_info(
-                ProcessorInfo::builder()
-                    .supported_architectures(ArchitectureType::X8664)
-                    .manufacturer("AMD")
-                    .build(),
-            )
-            .instance_storage_info(InstanceStorageInfo::builder().total_size_in_gb(950).build())
-            .build();
+        let it = InstanceTypeInfo {
+            default_vcpus: Some(8),
+            supported_architectures: vec!["x86_64".into()],
+            manufacturer: Some("AMD".into()),
+            total_storage_gb: Some(950),
+            ..Default::default()
+        };
         let emitted: std::collections::BTreeSet<_> =
             karpenter_labels(&it, "c8gd.2xlarge", 8, 16384)
                 .into_keys()
@@ -937,23 +914,19 @@ mod tests {
     // r[verify scheduler.sla.ceiling.catalog-derived+4]
     #[test]
     fn karpenter_labels_omits_nvme_label_when_absent() {
-        use aws_sdk_ec2::types::InstanceStorageInfo;
-        // ebs-only: no instance_storage_info at all (the real API shape).
-        let ebs_only = InstanceTypeInfo::builder().build();
+        // ebs-only: no instanceStorageInfo at all (the real API shape).
+        let ebs_only = InstanceTypeInfo::default();
         let ebs_labels = karpenter_labels(&ebs_only, "c8a.48xlarge", 192, 393216);
         assert!(
             !ebs_labels.contains_key(label::LOCAL_NVME),
             "ebs-only type must NOT carry the instance-local-nvme label \
              (Karpenter omits it; DoesNotExist must match)"
         );
-        // nvme: instance_storage_info.total_size_in_gb populated.
-        let nvme = InstanceTypeInfo::builder()
-            .instance_storage_info(
-                InstanceStorageInfo::builder()
-                    .total_size_in_gb(5700)
-                    .build(),
-            )
-            .build();
+        // nvme: instanceStorageInfo.totalSizeInGB populated.
+        let nvme = InstanceTypeInfo {
+            total_storage_gb: Some(5700),
+            ..Default::default()
+        };
         let nvme_labels = karpenter_labels(&nvme, "c8gd.metal-48xl", 192, 393216);
         assert_eq!(
             nvme_labels.get(label::LOCAL_NVME).map(String::as_str),

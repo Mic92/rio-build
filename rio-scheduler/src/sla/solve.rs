@@ -3825,6 +3825,7 @@ mod tests {
             ("sla/config", include_str!("config.rs")),
             ("sla/cost", include_str!("cost.rs")),
             ("sla/dip", include_str!("dip.rs")),
+            ("sla/ec2", include_str!("ec2.rs")),
             ("sla/explain", include_str!("explain.rs")),
             ("sla/explore", include_str!("explore.rs")),
             ("sla/fit", include_str!("fit.rs")),

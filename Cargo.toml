@@ -363,6 +363,10 @@ http = "1"
 # Already transitive via hyper; pinned direct so rio-store's parser
 # doesn't break if hyper's deptree shifts.
 httpdate = "1"
+# EC2 query-protocol XML responses (rio-scheduler sla/ec2.rs). Tiny,
+# zero-dep with default-features off; replaces aws-sdk-ec2 in the
+# scheduler.
+quick-xml = { version = "0.38", default-features = false }
 
 # Crypto
 sha1 = "0.11"

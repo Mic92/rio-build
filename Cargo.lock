@@ -5793,6 +5793,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a1d01941d82fa2ab50be1e79e6714289dd7cde78eba4c074bc5a4374f650dfe0"
 
 [[package]]
+name = "quick-xml"
+version = "0.38.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b66c2058c55a409d601666cffe35f04333cf1013010882cec174a7467cd4e21c"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "quinn"
 version = "0.11.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6597,8 +6606,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "aws-config",
- "aws-sdk-ec2",
- "aws-smithy-mocks",
+ "aws-credential-types",
+ "aws-sigv4",
  "axum",
  "base64 0.22.1",
  "clap",
@@ -6620,8 +6629,10 @@ dependencies = [
  "proptest",
  "prost",
  "prost-types",
+ "quick-xml",
  "quint-connect",
  "rand 0.10.1",
+ "reqwest",
  "rio-auth",
  "rio-common",
  "rio-evidence-kernel",
@@ -6653,6 +6664,7 @@ dependencies = [
  "tracing-opentelemetry",
  "tracing-subscriber",
  "tracing-test",
+ "url",
  "uuid",
  "workspace-hack",
 ]

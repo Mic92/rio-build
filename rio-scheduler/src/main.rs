@@ -229,7 +229,7 @@ async fn main() -> anyhow::Result<()> {
         // and the `_class_ceiling_uncatalogued` gauge fires per class.
         // r[impl scheduler.sla.ceiling.catalog-derived+4]
         if matches!(hw_cost_source, rio_scheduler::sla::cost::HwCostSource::Spot) {
-            let ec2 = aws_sdk_ec2::Client::new(&aws_config::from_env().load().await);
+            let ec2 = rio_scheduler::sla::ec2::Client::new(&aws_config::from_env().load().await);
             let catalog = match tokio::time::timeout(
                 std::time::Duration::from_secs(30),
                 rio_scheduler::sla::catalog::fetch_catalog(&ec2),

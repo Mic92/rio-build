@@ -1387,8 +1387,7 @@
       ],
       "resolvedDefaultFeatures": [
         "default-https-client",
-        "rt-tokio",
-        "test-util"
+        "rt-tokio"
       ],
       "libCrateTypes": [
         "lib"
@@ -18104,6 +18103,24 @@
         "Colin Kiegel <kiegel@gmx.de>"
       ]
     },
+    "quick-xml": {
+      "crateName": "quick-xml",
+      "version": "0.38.4",
+      "edition": "2021",
+      "sha256": "0772siy4d9vlq77842012c8cycs3y0szxkv62rh9sh2sqmc20v5n",
+      "source": {
+        "type": "crates-io"
+      },
+      "dependencies": [
+        {
+          "name": "memchr",
+          "packageId": "memchr"
+        }
+      ],
+      "libCrateTypes": [
+        "lib"
+      ]
+    },
     "quinn": {
       "crateName": "quinn",
       "version": "0.11.9",
@@ -21054,8 +21071,12 @@
           "packageId": "aws-config"
         },
         {
-          "name": "aws-sdk-ec2",
-          "packageId": "aws-sdk-ec2"
+          "name": "aws-credential-types",
+          "packageId": "aws-credential-types"
+        },
+        {
+          "name": "aws-sigv4",
+          "packageId": "aws-sigv4"
         },
         {
           "name": "axum",
@@ -21118,8 +21139,16 @@
           "packageId": "prost-types"
         },
         {
+          "name": "quick-xml",
+          "packageId": "quick-xml"
+        },
+        {
           "name": "rand",
           "packageId": "rand 0.10.1"
+        },
+        {
+          "name": "reqwest",
+          "packageId": "reqwest"
         },
         {
           "name": "rio-auth",
@@ -21218,6 +21247,10 @@
           "packageId": "tracing"
         },
         {
+          "name": "url",
+          "packageId": "url"
+        },
+        {
           "name": "uuid",
           "packageId": "uuid"
         },
@@ -21227,14 +21260,6 @@
         }
       ],
       "devDependencies": [
-        {
-          "name": "aws-sdk-ec2",
-          "packageId": "aws-sdk-ec2"
-        },
-        {
-          "name": "aws-smithy-mocks",
-          "packageId": "aws-smithy-mocks"
-        },
         {
           "name": "config",
           "packageId": "config"

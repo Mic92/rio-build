@@ -108,6 +108,7 @@ pub mod catalog;
 pub mod config;
 pub mod cost;
 pub mod dip;
+pub mod ec2;
 pub mod explain;
 pub mod explore;
 pub mod fit;

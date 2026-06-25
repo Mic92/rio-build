@@ -2426,7 +2426,7 @@ pub async fn spot_price_poller(
     // `rio_common::s3::default_client` — IRSA in-cluster, profile/env
     // locally. The caller already gated on `hw_cost_source == Spot`, so
     // no `Option` dance.
-    let ec2 = aws_sdk_ec2::Client::new(&aws_config::from_env().load().await);
+    let ec2 = super::ec2::Client::new(&aws_config::from_env().load().await);
     let mut tick = tokio::time::interval(Duration::from_secs(POLL_INTERVAL_SECS));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
@@ -2852,11 +2852,25 @@ pub(crate) async fn poller_tick_prelude(
 /// `pricing:GetProducts`). Empty menu → empty result (poller is a
 /// no-op until Part-B menu population).
 async fn poll_spot_once(
-    ec2: &aws_sdk_ec2::Client,
+    ec2: &super::ec2::Client,
     cells: &HashMap<Cell, Vec<InstanceType>>,
 ) -> anyhow::Result<HashMap<Cell, f64>> {
-    use aws_sdk_ec2::types::InstanceType as Ec2InstanceType;
+    let h_of = spot_type_index(cells);
+    if h_of.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let types: Vec<String> = h_of.keys().cloned().collect();
+    let start = (now_epoch() - 3600.0) as i64;
+    let history = ec2.describe_spot_price_history(&types, start).await?;
+    Ok(spot_median_by_cell(&history, &h_of))
+}
 
+/// `instance-type → [(h, vCPU)]` index over the Spot cells' menus.
+/// Split from [`poll_spot_once`] so the median fold is testable
+/// without an EC2 client.
+fn spot_type_index(
+    cells: &HashMap<Cell, Vec<InstanceType>>,
+) -> HashMap<String, Vec<(HwClassName, f64)>> {
     // instance-type → [(h, vCPU)]. Multi-valued: under R24B7
     // autodiscovery the same type appears in ≥2 cells whenever their
     // `requirements` overlap (e.g. `lo-* ⊂ mid-*` in the prod 12-class
@@ -2873,49 +2887,42 @@ async fn poll_spot_once(
                 .push((h.clone(), f64::from(it.cores)));
         }
     }
-    if h_of.is_empty() {
-        return Ok(HashMap::new());
-    }
+    h_of
+}
 
-    // Spot history, last hour, all configured types, paginated. AWS
-    // returns one row per (type, AZ, price-change); a quiet hour can
-    // be empty for some types — those just drop out of the median.
-    let start = aws_sdk_ec2::primitives::DateTime::from_secs((now_epoch() - 3600.0) as i64);
+/// Per-h median of `price/vCPU` over a spot-history batch. AWS returns
+/// one row per (type, AZ, price-change); a quiet hour can be empty for
+/// some types — those just drop out of the median. Pure fold; the EC2
+/// fetch lives in [`poll_spot_once`].
+fn spot_median_by_cell(
+    history: &[super::ec2::SpotPrice],
+    h_of: &HashMap<String, Vec<(HwClassName, f64)>>,
+) -> HashMap<Cell, f64> {
     let mut per_h: HashMap<HwClassName, Vec<f64>> = HashMap::new();
-    let mut pages = ec2
-        .describe_spot_price_history()
-        .set_instance_types(Some(
-            h_of.keys()
-                .map(|t| Ec2InstanceType::from(t.as_str()))
-                .collect(),
-        ))
-        .product_descriptions("Linux/UNIX")
-        .start_time(start)
-        .into_paginator()
-        .send();
-    while let Some(page) = pages.try_next().await? {
-        for row in page.spot_price_history() {
-            let Some(t) = row.instance_type().map(|t| t.as_str()) else {
-                continue;
-            };
-            let Some(hs) = h_of.get(t) else {
-                continue;
-            };
-            let Some(price) = row.spot_price().and_then(|p| p.parse::<f64>().ok()) else {
-                ::metrics::counter!(
-                    "rio_scheduler_sla_hw_cost_fallback_total",
-                    "reason" => "parse"
-                )
-                .increment(1);
-                continue;
-            };
-            for (h, vcpu) in hs.iter().filter(|(_, v)| *v > 0.0) {
-                per_h.entry(h.clone()).or_default().push(price / vcpu);
-            }
+    for row in history {
+        let Some(t) = row.instance_type.as_deref() else {
+            continue;
+        };
+        let Some(hs) = h_of.get(t) else {
+            continue;
+        };
+        let Some(price) = row
+            .spot_price
+            .as_deref()
+            .and_then(|p| p.parse::<f64>().ok())
+        else {
+            ::metrics::counter!(
+                "rio_scheduler_sla_hw_cost_fallback_total",
+                "reason" => "parse"
+            )
+            .increment(1);
+            continue;
+        };
+        for (h, vcpu) in hs.iter().filter(|(_, v)| *v > 0.0) {
+            per_h.entry(h.clone()).or_default().push(price / vcpu);
         }
     }
-
-    Ok(per_h
+    per_h
         .into_iter()
         .filter_map(|(h, mut xs)| {
             if xs.is_empty() {
@@ -2924,7 +2931,7 @@ async fn poll_spot_once(
             xs.sort_by(|a, b| a.total_cmp(b));
             Some(((h, CapacityType::Spot), xs[xs.len() / 2]))
         })
-        .collect())
+        .collect()
 }
 
 #[cfg(test)]
@@ -3771,37 +3778,29 @@ mod tests {
         assert!(b.menu(&cell).is_empty());
     }
 
-    /// `poll_spot_once`: per-h median of `price/vCPU` over the returned
-    /// history, with vCPU read from the menu (not a separate EC2 call).
-    /// The 0.10 outlier for `intel-7` is the median's mid-value, not
-    /// the mean.
-    #[tokio::test]
-    async fn poll_spot_once_median_per_h() {
-        use aws_sdk_ec2::types::SpotPrice;
-        use aws_smithy_mocks::{RuleMode, mock, mock_client};
-        type Ec2 = aws_sdk_ec2::Client;
-
-        let sp = |name: &str, price: &str| {
-            SpotPrice::builder()
-                .instance_type(name.into())
-                .spot_price(price)
-                .build()
+    /// `spot_median_by_cell`: per-h median of `price/vCPU` over the
+    /// returned history, with vCPU read from the menu (not a separate
+    /// EC2 call). The 0.10 outlier for `intel-7` is the median's
+    /// mid-value, not the mean.
+    #[test]
+    fn poll_spot_once_median_per_h() {
+        use crate::sla::ec2::SpotPrice;
+        let sp = |name: &str, price: &str| SpotPrice {
+            instance_type: Some(name.into()),
+            spot_price: Some(price.into()),
         };
-        let history = mock!(Ec2::describe_spot_price_history).then_output(move || {
-            aws_sdk_ec2::operation::describe_spot_price_history::DescribeSpotPriceHistoryOutput::builder()
-                // intel-8: one sample → 0.04/2 = 0.02.
-                .spot_price_history(sp("c8g.large", "0.0400"))
-                // intel-7: three samples → median of [0.03/2, 0.05/2,
-                // 0.40/4] = median of [0.015, 0.025, 0.10] = 0.025.
-                .spot_price_history(sp("c7a.large", "0.0300"))
-                .spot_price_history(sp("c7a.large", "0.0500"))
-                .spot_price_history(sp("m7a.large", "0.4000"))
-                // Unparseable price + unknown type: dropped.
-                .spot_price_history(sp("c7a.large", "n/a"))
-                .spot_price_history(sp("c5.large", "0.0100"))
-                .build()
-        });
-        let client = mock_client!(aws_sdk_ec2, RuleMode::MatchAny, &[&history]);
+        let history = vec![
+            // intel-8: one sample → 0.04/2 = 0.02.
+            sp("c8g.large", "0.0400"),
+            // intel-7: three samples → median of [0.03/2, 0.05/2,
+            // 0.40/4] = median of [0.015, 0.025, 0.10] = 0.025.
+            sp("c7a.large", "0.0300"),
+            sp("c7a.large", "0.0500"),
+            sp("m7a.large", "0.4000"),
+            // Unparseable price + unknown type: dropped.
+            sp("c7a.large", "n/a"),
+            sp("c5.large", "0.0100"),
+        ];
 
         let mut cells: HashMap<Cell, Vec<InstanceType>> = HashMap::new();
         cells.insert(
@@ -3817,17 +3816,12 @@ mod tests {
             vec![it("c6a.large", 2, 4, 0.0)],
         );
 
-        let obs = poll_spot_once(&client, &cells).await.unwrap();
+        let obs = spot_median_by_cell(&history, &spot_type_index(&cells));
         assert_eq!(obs.len(), 2, "intel-6 had no rows → absent");
         assert!((obs[&("intel-8".into(), CapacityType::Spot)] - 0.02).abs() < 1e-9);
         assert!((obs[&("intel-7".into(), CapacityType::Spot)] - 0.025).abs() < 1e-9);
-        // Empty menu → no-op.
-        assert!(
-            poll_spot_once(&client, &HashMap::new())
-                .await
-                .unwrap()
-                .is_empty()
-        );
+        // Empty menu → empty index (poll_spot_once short-circuits).
+        assert!(spot_type_index(&HashMap::new()).is_empty());
     }
 
     /// bug_007: an instance type observed in ≥2 cells' menus must
@@ -3836,23 +3830,13 @@ mod tests {
     /// overwrote the first (HashMap-iteration-order winner). The prod
     /// 12-class config guarantees overlap (`lo-* ⊂ mid-*` requirements),
     /// so once both observe a gen-6 type one cell is starved.
-    #[tokio::test]
-    async fn poll_spot_once_shared_type_feeds_both_cells() {
-        use aws_sdk_ec2::types::SpotPrice;
-        use aws_smithy_mocks::{RuleMode, mock, mock_client};
-        type Ec2 = aws_sdk_ec2::Client;
-
-        let history = mock!(Ec2::describe_spot_price_history).then_output(move || {
-            aws_sdk_ec2::operation::describe_spot_price_history::DescribeSpotPriceHistoryOutput::builder()
-                .spot_price_history(
-                    SpotPrice::builder()
-                        .instance_type("c6i.4xlarge".into())
-                        .spot_price("0.3200")
-                        .build(),
-                )
-                .build()
-        });
-        let client = mock_client!(aws_sdk_ec2, RuleMode::MatchAny, &[&history]);
+    #[test]
+    fn poll_spot_once_shared_type_feeds_both_cells() {
+        use crate::sla::ec2::SpotPrice;
+        let history = vec![SpotPrice {
+            instance_type: Some("c6i.4xlarge".into()),
+            spot_price: Some("0.3200".into()),
+        }];
 
         let mut cells: HashMap<Cell, Vec<InstanceType>> = HashMap::new();
         let shared = it("c6i.4xlarge", 16, 32, 0.0);
@@ -3862,7 +3846,7 @@ mod tests {
         );
         cells.insert(("mid-ebs-x86".into(), CapacityType::Spot), vec![shared]);
 
-        let obs = poll_spot_once(&client, &cells).await.unwrap();
+        let obs = spot_median_by_cell(&history, &spot_type_index(&cells));
         assert_eq!(
             obs.len(),
             2,
