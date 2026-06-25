@@ -222,6 +222,32 @@
         "Zakarum <zaq.dev@icloud.com>"
       ]
     },
+    "annotate-snippets": {
+      "crateName": "annotate-snippets",
+      "version": "0.12.16",
+      "edition": "2024",
+      "sha256": "1w8kdyj2fh4n666wvd1krj2zcyjls9vlqrmpslx1yr5w0lcaa4gj",
+      "source": {
+        "type": "crates-io"
+      },
+      "dependencies": [
+        {
+          "name": "anstyle",
+          "packageId": "anstyle"
+        },
+        {
+          "name": "unicode-width",
+          "packageId": "unicode-width"
+        }
+      ],
+      "resolvedDefaultFeatures": [
+        "default",
+        "std"
+      ],
+      "libCrateTypes": [
+        "lib"
+      ]
+    },
     "anstyle": {
       "crateName": "anstyle",
       "version": "1.0.14",
@@ -308,6 +334,21 @@
       ],
       "authors": [
         "RustCrypto Developers"
+      ]
+    },
+    "arraydeque": {
+      "crateName": "arraydeque",
+      "version": "0.5.1",
+      "edition": "2021",
+      "sha256": "0dn2xdfg3rkiqsh8a6achnmvf5nf11xk33xgjzpksliab4yjx43x",
+      "source": {
+        "type": "crates-io"
+      },
+      "libCrateTypes": [
+        "lib"
+      ],
+      "authors": [
+        "andylokandy"
       ]
     },
     "arrayref": {
@@ -2937,6 +2978,52 @@
         "Torbjørn Birch Moltu <t.b.moltu@lyse.net>"
       ]
     },
+    "encoding_rs": {
+      "crateName": "encoding_rs",
+      "version": "0.8.35",
+      "edition": "2018",
+      "sha256": "1wv64xdrr9v37rqqdjsyb8l8wzlcbab80ryxhrszvnj59wy0y0vm",
+      "source": {
+        "type": "crates-io"
+      },
+      "dependencies": [
+        {
+          "name": "cfg-if",
+          "packageId": "cfg-if"
+        }
+      ],
+      "resolvedDefaultFeatures": [
+        "alloc",
+        "default"
+      ],
+      "libCrateTypes": [
+        "lib"
+      ],
+      "authors": [
+        "Henri Sivonen <hsivonen@hsivonen.fi>"
+      ]
+    },
+    "encoding_rs_io": {
+      "crateName": "encoding_rs_io",
+      "version": "0.1.7",
+      "edition": "2015",
+      "sha256": "10ra4l688cdadd8h1lsbahld1zbywnnqv68366mbhamn3xjwbhqw",
+      "source": {
+        "type": "crates-io"
+      },
+      "dependencies": [
+        {
+          "name": "encoding_rs",
+          "packageId": "encoding_rs"
+        }
+      ],
+      "libCrateTypes": [
+        "lib"
+      ],
+      "authors": [
+        "Andrew Gallant <jamslam@gmail.com>"
+      ]
+    },
     "endian-type": {
       "crateName": "endian-type",
       "version": "0.1.2",
@@ -3992,6 +4079,34 @@
         "Rust and WebAssembly Working Group"
       ]
     },
+    "granit-parser": {
+      "crateName": "granit-parser",
+      "version": "0.0.3",
+      "edition": "2021",
+      "sha256": "14bwwc8swz8h0v8d7qybmmq25czv5aipd1v1vbariq7rchhs62zm",
+      "source": {
+        "type": "crates-io"
+      },
+      "dependencies": [
+        {
+          "name": "arraydeque",
+          "packageId": "arraydeque"
+        },
+        {
+          "name": "smallvec",
+          "packageId": "smallvec"
+        }
+      ],
+      "libCrateTypes": [
+        "lib"
+      ],
+      "authors": [
+        "Ethiraric <ethiraric@gmail.com>",
+        "David Aguilar <davvid@gmail.com>",
+        "Yuheng Chen <yuhengchen@sensetime.com>",
+        "Bourumir Wyngs <bourumir-wyngs@gmail.com>"
+      ]
+    },
     "h2": {
       "crateName": "h2",
       "version": "0.4.13",
@@ -4789,8 +4904,7 @@
         "server",
         "server-auto",
         "service",
-        "tokio",
-        "tracing"
+        "tokio"
       ],
       "libCrateTypes": [
         "lib"
@@ -5710,9 +5824,9 @@
     },
     "k8s-openapi": {
       "crateName": "k8s-openapi",
-      "version": "0.27.1",
+      "version": "0.28.0",
       "edition": "2021",
-      "sha256": "0pldsxbxd4ckq94p8rkck4s862w33gfns6rclxr5imcx47sjdcsi",
+      "sha256": "1fsabg1708vmp44zz00p6x65hd0dbnpii601ss6l307yd8pr5inr",
       "source": {
         "type": "crates-io"
       },
@@ -5737,21 +5851,21 @@
       "resolvedDefaultFeatures": [
         "default",
         "std",
-        "v1_35"
+        "v1_36"
       ],
       "libCrateTypes": [
         "lib"
       ],
-      "links": "k8s-openapi-0.27.1",
+      "links": "k8s-openapi-0.28.0",
       "authors": [
         "Arnav Singh <me@arnavion.dev>"
       ]
     },
     "kube": {
       "crateName": "kube",
-      "version": "3.1.0",
+      "version": "4.0.0",
       "edition": "2024",
-      "sha256": "0hc7x38zdjdphmkx1b9pdyv3kiwwzkfbamjxjbcmx5x2knkadidc",
+      "sha256": "0ip1qc9kvgyp735rmxdjq75dspf737sazvhzs6b70siljn011fab",
       "source": {
         "type": "crates-io"
       },
@@ -5801,9 +5915,9 @@
     },
     "kube-client": {
       "crateName": "kube-client",
-      "version": "3.1.0",
+      "version": "4.0.0",
       "edition": "2024",
-      "sha256": "0h6xlwrjg07npsdr0rgxiyp6f9q27hryi0ndsh2ih7m9y78z5jhg",
+      "sha256": "0yskaybnf8m2c9rb0kxzlczb9jbx25sxdlqhzqhlq9n2bgh2ixnh",
       "source": {
         "type": "crates-io"
       },
@@ -5885,12 +5999,12 @@
           "packageId": "serde"
         },
         {
-          "name": "serde_json",
-          "packageId": "serde_json"
+          "name": "serde-saphyr",
+          "packageId": "serde-saphyr"
         },
         {
-          "name": "serde_yaml",
-          "packageId": "serde_yaml"
+          "name": "serde_json",
+          "packageId": "serde_json"
         },
         {
           "name": "thiserror",
@@ -5914,7 +6028,7 @@
         },
         {
           "name": "tower-http",
-          "packageId": "tower-http"
+          "packageId": "tower-http 0.6.8"
         },
         {
           "name": "tracing",
@@ -5943,7 +6057,7 @@
         "pem",
         "rustls",
         "rustls-tls",
-        "serde_yaml",
+        "serde-saphyr",
         "tokio",
         "tokio-tungstenite",
         "tokio-util",
@@ -5963,9 +6077,9 @@
     },
     "kube-core": {
       "crateName": "kube-core",
-      "version": "3.1.0",
+      "version": "4.0.0",
       "edition": "2024",
-      "sha256": "17ki1s0smv4vj8zkrk56phxxr1943sky5v1rv30jwlwbgbdx49pi",
+      "sha256": "1a7a3n4mwiqywajlld3axii0k7ridizp5mn7b06i81ms6dcjzc61",
       "source": {
         "type": "crates-io"
       },
@@ -6033,9 +6147,9 @@
     },
     "kube-derive": {
       "crateName": "kube-derive",
-      "version": "3.1.0",
+      "version": "4.0.0",
       "edition": "2024",
-      "sha256": "1yj9z0niwdh9djvr0cdh7ac7chmw999xmimgkizrbkhz29zbkffn",
+      "sha256": "1an7av9xlif02klbk1xsz7nvggpnazpq2kpris0z3bbxf2c1h5zy",
       "source": {
         "type": "crates-io"
       },
@@ -6074,9 +6188,9 @@
     },
     "kube-runtime": {
       "crateName": "kube-runtime",
-      "version": "3.1.0",
+      "version": "4.0.0",
       "edition": "2024",
-      "sha256": "1whmdwnq5nnzgkpldyql7p51grj19qrq0pk17r6yfvl2fmq76wn0",
+      "sha256": "08db3c5bg185y2yh6vilbkwqfdm5aykf87xllllwzis0qmkfrpcr",
       "source": {
         "type": "crates-io"
       },
@@ -6935,6 +7049,25 @@
       ],
       "authors": [
         "The nix-rust Project Developers"
+      ]
+    },
+    "nohash-hasher": {
+      "crateName": "nohash-hasher",
+      "version": "0.2.0",
+      "edition": "2018",
+      "sha256": "0lf4p6k01w4wm7zn4grnihzj8s7zd5qczjmzng7wviwxawih5x9b",
+      "source": {
+        "type": "crates-io"
+      },
+      "resolvedDefaultFeatures": [
+        "default",
+        "std"
+      ],
+      "libCrateTypes": [
+        "lib"
+      ],
+      "authors": [
+        "Parity Technologies <admin@parity.io>"
       ]
     },
     "nu-ansi-term": {
@@ -9598,7 +9731,7 @@
         },
         {
           "name": "tower-http",
-          "packageId": "tower-http",
+          "packageId": "tower-http 0.6.8",
           "target": "cfg(not(all(target_arch = \"wasm32\", any(target_os = \"unknown\", target_os = \"none\"))))"
         },
         {
@@ -9821,7 +9954,7 @@
         },
         {
           "name": "tower-http",
-          "packageId": "tower-http"
+          "packageId": "tower-http 0.7.0"
         },
         {
           "name": "tracing",
@@ -11025,6 +11158,70 @@
         "David Tolnay <dtolnay@gmail.com>"
       ]
     },
+    "serde-saphyr": {
+      "crateName": "serde-saphyr",
+      "version": "0.0.27",
+      "edition": "2024",
+      "sha256": "1crx4kmmm88y4dbaramdsn0w8fqzchaz12b6vdgx7bddzb1v95sq",
+      "source": {
+        "type": "crates-io"
+      },
+      "dependencies": [
+        {
+          "name": "ahash",
+          "packageId": "ahash"
+        },
+        {
+          "name": "annotate-snippets",
+          "packageId": "annotate-snippets"
+        },
+        {
+          "name": "base64",
+          "packageId": "base64"
+        },
+        {
+          "name": "encoding_rs_io",
+          "packageId": "encoding_rs_io"
+        },
+        {
+          "name": "getrandom",
+          "packageId": "getrandom 0.3.4",
+          "target": "cfg(target_arch = \"wasm32\")"
+        },
+        {
+          "name": "granit-parser",
+          "packageId": "granit-parser"
+        },
+        {
+          "name": "nohash-hasher",
+          "packageId": "nohash-hasher"
+        },
+        {
+          "name": "num-traits",
+          "packageId": "num-traits"
+        },
+        {
+          "name": "serde",
+          "packageId": "serde"
+        },
+        {
+          "name": "smallvec",
+          "packageId": "smallvec"
+        },
+        {
+          "name": "zmij",
+          "packageId": "zmij"
+        }
+      ],
+      "resolvedDefaultFeatures": [
+        "default",
+        "deserialize",
+        "serialize"
+      ],
+      "libCrateTypes": [
+        "lib"
+      ]
+    },
     "serde-value": {
       "crateName": "serde-value",
       "version": "0.7.0",
@@ -11277,43 +11474,6 @@
       ],
       "authors": [
         "Anthony Ramine <n.oxyde@gmail.com>"
-      ]
-    },
-    "serde_yaml": {
-      "crateName": "serde_yaml",
-      "version": "0.9.34+deprecated",
-      "edition": "2021",
-      "sha256": "0isba1fjyg3l6rxk156k600ilzr8fp7crv82rhal0rxz5qd1m2va",
-      "source": {
-        "type": "crates-io"
-      },
-      "dependencies": [
-        {
-          "name": "indexmap",
-          "packageId": "indexmap"
-        },
-        {
-          "name": "itoa",
-          "packageId": "itoa"
-        },
-        {
-          "name": "ryu",
-          "packageId": "ryu"
-        },
-        {
-          "name": "serde",
-          "packageId": "serde"
-        },
-        {
-          "name": "unsafe-libyaml",
-          "packageId": "unsafe-libyaml"
-        }
-      ],
-      "libCrateTypes": [
-        "lib"
-      ],
-      "authors": [
-        "David Tolnay <dtolnay@gmail.com>"
       ]
     },
     "serdect": {
@@ -12969,9 +13129,9 @@
     },
     "tokio-tungstenite": {
       "crateName": "tokio-tungstenite",
-      "version": "0.28.0",
+      "version": "0.29.0",
       "edition": "2018",
-      "sha256": "0mzqgc94csy5ai6kx5yxj548shppq2kwdbyrsdsilhycvmn40nnj",
+      "sha256": "0p4i0a9fwhn92y4ybc0z75pc8hn2hjjgnlymminqb1c5h9ga0wlg",
       "source": {
         "type": "crates-io"
       },
@@ -13549,7 +13709,7 @@
         "Tower Maintainers <team@tower-rs.com>"
       ]
     },
-    "tower-http": {
+    "tower-http 0.6.8": {
       "crateName": "tower-http",
       "version": "0.6.8",
       "edition": "2018",
@@ -13614,7 +13774,6 @@
       "resolvedDefaultFeatures": [
         "auth",
         "base64",
-        "cors",
         "default",
         "follow-redirect",
         "futures-util",
@@ -13626,6 +13785,55 @@
         "tracing",
         "util",
         "validate-request"
+      ],
+      "libCrateTypes": [
+        "lib"
+      ],
+      "authors": [
+        "Tower Maintainers <team@tower-rs.com>"
+      ]
+    },
+    "tower-http 0.7.0": {
+      "crateName": "tower-http",
+      "version": "0.7.0",
+      "edition": "2018",
+      "sha256": "0cz2k1a6gj54lcqx9cxb6k7rfgwcgc2zi31xnq0vxhmh2blpa7xi",
+      "source": {
+        "type": "crates-io"
+      },
+      "dependencies": [
+        {
+          "name": "bitflags",
+          "packageId": "bitflags"
+        },
+        {
+          "name": "bytes",
+          "packageId": "bytes"
+        },
+        {
+          "name": "http",
+          "packageId": "http 1.4.0"
+        },
+        {
+          "name": "percent-encoding",
+          "packageId": "percent-encoding"
+        },
+        {
+          "name": "pin-project-lite",
+          "packageId": "pin-project-lite"
+        },
+        {
+          "name": "tower-layer",
+          "packageId": "tower-layer"
+        },
+        {
+          "name": "tower-service",
+          "packageId": "tower-service"
+        }
+      ],
+      "resolvedDefaultFeatures": [
+        "cors",
+        "default"
       ],
       "libCrateTypes": [
         "lib"
@@ -14019,9 +14227,9 @@
     },
     "tungstenite": {
       "crateName": "tungstenite",
-      "version": "0.28.0",
+      "version": "0.29.0",
       "edition": "2021",
-      "sha256": "0hll4l62lk77zqzgps04689skpk555lcpmi3hhyyn2as9v4dqa46",
+      "sha256": "1f7673dhqbfxc0f2ccyiyqhv882nkialnzm5qb3vkbwky8m1a0bc",
       "source": {
         "type": "crates-io"
       },
@@ -14057,10 +14265,6 @@
         {
           "name": "thiserror",
           "packageId": "thiserror 2.0.18"
-        },
-        {
-          "name": "utf-8",
-          "packageId": "utf-8"
         }
       ],
       "resolvedDefaultFeatures": [
@@ -14211,21 +14415,6 @@
         "RustCrypto Developers"
       ]
     },
-    "unsafe-libyaml": {
-      "crateName": "unsafe-libyaml",
-      "version": "0.2.11",
-      "edition": "2021",
-      "sha256": "0qdq69ffl3v5pzx9kzxbghzn0fzn266i1xn70y88maybz9csqfk7",
-      "source": {
-        "type": "crates-io"
-      },
-      "libCrateTypes": [
-        "lib"
-      ],
-      "authors": [
-        "David Tolnay <dtolnay@gmail.com>"
-      ]
-    },
     "untrusted 0.7.1": {
       "crateName": "untrusted",
       "version": "0.7.1",
@@ -14288,22 +14477,6 @@
       ],
       "authors": [
         "The rust-url developers"
-      ]
-    },
-    "utf-8": {
-      "crateName": "utf-8",
-      "version": "0.7.6",
-      "edition": "2015",
-      "sha256": "1a9ns3fvgird0snjkd3wbdhwd3zdpc2h5gpyybrfr6ra5pkqxk09",
-      "source": {
-        "type": "crates-io"
-      },
-      "libName": "utf8",
-      "libCrateTypes": [
-        "lib"
-      ],
-      "authors": [
-        "Simon Sapin <simon.sapin@exyr.org>"
       ]
     },
     "utf8_iter": {
@@ -15829,7 +16002,13 @@
         },
         {
           "name": "hyper",
-          "packageId": "hyper"
+          "packageId": "hyper",
+          "target": "aarch64-unknown-linux-gnu"
+        },
+        {
+          "name": "hyper",
+          "packageId": "hyper",
+          "target": "x86_64-unknown-linux-gnu"
         },
         {
           "name": "hyper-rustls",
@@ -15944,10 +16123,6 @@
         {
           "name": "p521",
           "packageId": "p521"
-        },
-        {
-          "name": "percent-encoding",
-          "packageId": "percent-encoding"
         },
         {
           "name": "pkcs8",
@@ -16124,10 +16299,6 @@
           "packageId": "syn"
         },
         {
-          "name": "sync_wrapper",
-          "packageId": "sync_wrapper"
-        },
-        {
           "name": "thiserror",
           "packageId": "thiserror 2.0.18"
         },
@@ -16185,16 +16356,12 @@
         },
         {
           "name": "tower-http",
-          "packageId": "tower-http"
-        },
-        {
-          "name": "tower-http",
-          "packageId": "tower-http",
+          "packageId": "tower-http 0.6.8",
           "target": "aarch64-unknown-linux-gnu"
         },
         {
           "name": "tower-http",
-          "packageId": "tower-http",
+          "packageId": "tower-http 0.6.8",
           "target": "x86_64-unknown-linux-gnu"
         },
         {
@@ -16418,7 +16585,13 @@
         },
         {
           "name": "hyper",
-          "packageId": "hyper"
+          "packageId": "hyper",
+          "target": "aarch64-unknown-linux-gnu"
+        },
+        {
+          "name": "hyper",
+          "packageId": "hyper",
+          "target": "x86_64-unknown-linux-gnu"
         },
         {
           "name": "hyper-rustls",
@@ -16533,10 +16706,6 @@
         {
           "name": "p521",
           "packageId": "p521"
-        },
-        {
-          "name": "percent-encoding",
-          "packageId": "percent-encoding"
         },
         {
           "name": "pkcs8",
@@ -16713,10 +16882,6 @@
           "packageId": "syn"
         },
         {
-          "name": "sync_wrapper",
-          "packageId": "sync_wrapper"
-        },
-        {
           "name": "thiserror",
           "packageId": "thiserror 2.0.18"
         },
@@ -16774,16 +16939,12 @@
         },
         {
           "name": "tower-http",
-          "packageId": "tower-http"
-        },
-        {
-          "name": "tower-http",
-          "packageId": "tower-http",
+          "packageId": "tower-http 0.6.8",
           "target": "aarch64-unknown-linux-gnu"
         },
         {
           "name": "tower-http",
-          "packageId": "tower-http",
+          "packageId": "tower-http 0.6.8",
           "target": "x86_64-unknown-linux-gnu"
         },
         {
