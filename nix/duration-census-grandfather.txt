@@ -174,7 +174,6 @@ rio-store/src/gc/orphan.rs	SCAN_INTERVAL
 rio-store/src/gc/orphan.rs	STALE_THRESHOLD
 rio-store/src/gc/sweep.rs	CHUNK_GRACE_SECS
 rio-store/src/grpc/admin.rs	STORE_GAUGE_INTERVAL
-rio-store/src/grpc/mod.rs	DEFAULT_CONCURRENT_PUT_WAIT
 rio-store/src/grpc/put_path/common.rs	BUDGET_WAIT_GRACE
 rio-store/src/ingest.rs	PLACEHOLDER_HEARTBEAT_INTERVAL
 rio-store/src/ingest.rs	PLACEHOLDER_HEARTBEAT_TICK

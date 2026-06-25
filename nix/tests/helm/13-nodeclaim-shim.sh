@@ -104,19 +104,19 @@ for h in metal-x86 metal-arm; do
     in_h { print }
   ' <<<"$sched_toml")
   test -n "$block" || { echo "FAIL: scheduler.toml missing hw_classes.$h" >&2; exit 1; }
-  echo "$block" | grep -q 'node_class = "rio-metal"' || {
+  grep -q 'node_class = "rio-metal"' <<<"$block" || {
     echo "FAIL: $h node_class != rio-metal" >&2; exit 1; }
   # §13d (r30 bug_007): nixos-test added — `requiredSystemFeatures =
   # ["nixos-test", "kvm"]` is the standard nixpkgs `nixosTest` set.
   # 18-metal-feature-routing.sh asserts the full superset; this is the
   # rendering shape check (a JSON array literal).
-  echo "$block" | grep -q 'provides_features = \[.*"kvm".*\]' || {
+  grep -q 'provides_features = \[.*"kvm".*\]' <<<"$block" || {
     echo "FAIL: $h missing provides_features ⊇ [kvm]" >&2; exit 1; }
-  echo "$block" | grep -q 'capacity_types = \["spot","on-demand"\]' || {
+  grep -q 'capacity_types = \["spot","on-demand"\]' <<<"$block" || {
     echo "FAIL: $h missing capacity_types=[spot, on-demand] (M1)" >&2; exit 1; }
-  echo "$block" | grep -q 'taints = \[' || {
+  grep -q 'taints = \[' <<<"$block" || {
     echo "FAIL: $h missing taints" >&2; exit 1; }
-  echo "$block" | grep -q '"rio.build/kvm"' || {
+  grep -q '"rio.build/kvm"' <<<"$block" || {
     echo "FAIL: $h missing rio.build/kvm taint" >&2; exit 1; }
 done
 

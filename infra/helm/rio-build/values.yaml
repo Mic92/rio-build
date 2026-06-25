@@ -1043,7 +1043,7 @@ scheduler:
       mid-nvme-x86:
         nodeClass: rio-nvme
         # Pre-existing structure: hi-nvme-x86-g7 / mid-nvme-x86 /
-        # lo-nvme-x86 all resolve to the SAME instance population
+        # lo-nvme-x86 all resolve to the same instance population
         # (gen-6 x86 c/m/r d-variants — gen-7 x86 has none). The
         # ladder edges into this row are membership-preserving no-ops
         # on the type axis, kept for graph regularity (closure walk

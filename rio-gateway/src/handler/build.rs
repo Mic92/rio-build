@@ -2763,8 +2763,12 @@ pub(super) async fn handle_build_derivation<R: AsyncRead + Unpin, W: AsyncWrite 
         active_build_ids,
         tenant_name,
         jwt,
-        limiter,
-        quota_cache,
+        shared:
+            crate::SessionShared {
+                limiter,
+                quota_cache,
+                ..
+            },
         ..
     } = ctx;
     let (drv_path_str, drv_path) = match super::read_store_path(reader).await {
@@ -3310,8 +3314,12 @@ async fn submit_dag<W: AsyncWrite + Unpin>(
         active_build_ids,
         tenant_name,
         jwt,
-        limiter,
-        quota_cache,
+        shared:
+            crate::SessionShared {
+                limiter,
+                quota_cache,
+                ..
+            },
         ..
     } = ctx;
 
@@ -3930,9 +3938,7 @@ mod tests {
             SchedulerServiceClient::new(dead),
             None,
             crate::handler::SessionJwt::none(),
-            None,
-            crate::ratelimit::TenantLimiter::disabled(),
-            crate::quota::QuotaCache::new(),
+            crate::SessionShared::default(),
         )
     }
 

@@ -83,7 +83,17 @@ impl TenantLimiter {
     pub fn disabled() -> Self {
         Self::new(None)
     }
+}
 
+impl Default for TenantLimiter {
+    /// `Default` = [`disabled`](Self::disabled). Lets
+    /// [`SessionShared`](crate::SessionShared) derive `Default`.
+    fn default() -> Self {
+        Self::disabled()
+    }
+}
+
+impl TenantLimiter {
     /// Check and consume one token for `tenant`.
     ///
     /// `tenant` is `Option<&str>` to match

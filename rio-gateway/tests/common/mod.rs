@@ -30,6 +30,7 @@ pub fn spawn_session_task(
     mut sched_client: SchedulerServiceClient<Channel>,
     tenant: Option<NormalizedName>,
     jwt: rio_gateway::handler::SessionJwt,
+    shared: rio_gateway::SessionShared,
     shutdown: CancellationToken,
 ) -> (DuplexStream, JoinHandle<()>) {
     let (client_stream, server_stream) = tokio::io::duplex(256 * 1024);
@@ -43,9 +44,7 @@ pub fn spawn_session_task(
             &mut sched_client,
             tenant,
             jwt,
-            None,
-            rio_gateway::TenantLimiter::disabled(),
-            rio_gateway::QuotaCache::new(),
+            shared,
             session::HANDSHAKE_TIMEOUT,
             shutdown,
         )
@@ -63,6 +62,30 @@ pub fn spawn_session_task(
         }
     });
     (client_stream, server_task)
+}
+
+/// Spawn a protocol session backed by externally-supplied gRPC clients
+/// and a shared [`SessionShared`](rio_gateway::SessionShared). For
+/// tests that need N sessions against ONE `MockStore` + ONE singleflight
+/// map. Thin wrapper over [`spawn_session_task`] fixing `jwt = none` and
+/// a fresh per-session shutdown token (multi-session tests don't
+/// exercise the graceful-shutdown path).
+pub fn spawn_shared_session(
+    store_client: StoreServiceClient<Channel>,
+    log_client: LogServiceClient<Channel>,
+    sched_client: SchedulerServiceClient<Channel>,
+    tenant: Option<NormalizedName>,
+    shared: rio_gateway::SessionShared,
+) -> (DuplexStream, JoinHandle<()>) {
+    spawn_session_task(
+        store_client,
+        log_client,
+        sched_client,
+        tenant,
+        rio_gateway::handler::SessionJwt::none(),
+        shared,
+        CancellationToken::new(),
+    )
 }
 
 /// Join handles for the two gRPC mock servers + the `run_protocol` task.
@@ -259,6 +282,7 @@ impl GatewaySession {
             scheduler_client.clone(),
             tenant,
             jwt,
+            rio_gateway::SessionShared::default(),
             shutdown.child_token(),
         );
 

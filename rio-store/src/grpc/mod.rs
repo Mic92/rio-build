@@ -369,7 +369,12 @@ pub const DEFAULT_CHUNK_PREFETCH_K: usize = 64;
 /// re-send retry (`gw.put.aborted-retry`, ~6 s spread over 8 attempts)
 /// then multiplies the effective coverage for pathologically slow
 /// winners.
-pub const DEFAULT_CONCURRENT_PUT_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
+///
+/// Re-export of [`rio_proto::DEFAULT_CONCURRENT_PUT_WAIT`]: rio-gateway's
+/// `FOLLOWER_WAIT_CAP` is const-asserted ≤ half this value, so a
+/// one-sided bump cannot silently misalign the gateway's fail-open
+/// against the store's wait.
+pub use rio_proto::DEFAULT_CONCURRENT_PUT_WAIT;
 
 /// Default global NAR buffer budget: 8 × MAX_NAR_SIZE (32 GiB on 64-bit).
 /// `tokio::sync::Semaphore` max permits is `usize::MAX >> 3`; this fits

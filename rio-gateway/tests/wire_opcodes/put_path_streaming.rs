@@ -1,4 +1,4 @@
-// r[verify gw.put.aborted-retry]
+// r[verify gw.put.aborted-retry+2]
 //! sh-004: `grpc_put_path_streaming` (>16 MiB lane) wait-then-adopt on
 //! `Aborted("concurrent PutPath in progress")`.
 //!

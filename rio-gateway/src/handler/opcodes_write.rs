@@ -13,7 +13,9 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tokio::task::JoinSet;
 use tracing::{Instrument, debug, instrument, warn};
 
-use super::grpc::{grpc_put_path, grpc_put_path_streaming};
+use super::grpc::grpc_put_path_streaming;
+use super::put_path::{PutCtx, grpc_put_path_singleflight};
+use super::singleflight::{FOLLOWER_WAIT_CAP, PIPELINE_FOLLOWER_WAIT_CAP};
 use super::{GatewayError, PROGRAM_NAME, SessionContext};
 use crate::drv_cache::{DRV_NAR_BUFFER_LIMIT, try_cache_drv};
 
@@ -83,10 +85,6 @@ pub(super) async fn handle_add_to_store_nar<R: AsyncRead + Unpin + Send, W: Asyn
     stderr: &mut StderrWriter<&mut W>,
     ctx: &mut SessionContext,
 ) -> anyhow::Result<()> {
-    let store_client = &mut ctx.store_client;
-    let jwt_token = ctx.jwt.token();
-    let service_signer = ctx.service_signer.as_deref();
-    let drv_cache = &mut ctx.drv_cache;
     let EntryHead {
         path,
         path_str,
@@ -119,11 +117,14 @@ pub(super) async fn handle_add_to_store_nar<R: AsyncRead + Unpin + Send, W: Asyn
         if let Err(e) = framed.read_exact(&mut nar_data).await {
             stderr_err!(stderr, "failed to read framed NAR for '{path_str}': {e}");
         }
-        try_cache_drv(&path, &nar_data, drv_cache);
-        if let Err(e) = grpc_put_path(store_client, jwt_token, service_signer, info, nar_data).await
+        try_cache_drv(&path, &nar_data, &mut ctx.drv_cache);
+        // r[impl gw.put.singleflight+2]
+        if let Err(e) =
+            grpc_put_path_singleflight(ctx.put_ctx(), FOLLOWER_WAIT_CAP, info, nar_data).await
         {
             stderr_err!(stderr, "store error: {e}");
         }
+        // FALL THROUGH to the sentinel probe — do NOT early-return Ok.
     } else {
         if path.is_derivation() {
             warn!(
@@ -131,10 +132,15 @@ pub(super) async fn handle_add_to_store_nar<R: AsyncRead + Unpin + Send, W: Asyn
                 "oversize .drv NAR — streaming (not cached; resolve_derivation fetches from store later)"
             );
         }
+        // Streaming: every caller uploads (no precheck); the
+        // singleflight registry participates only as a wait signal on
+        // Aborted+CONCURRENT inside grpc_put_path_streaming (other
+        // Errs surface immediately). On every Ok return `framed` is
+        // at nar_size; on Err the reader position is unspecified
+        // (stderr_err! aborts the wire session).
         if let Err(e) = grpc_put_path_streaming(
-            store_client,
-            jwt_token,
-            service_signer,
+            ctx.put_ctx(),
+            FOLLOWER_WAIT_CAP,
             info,
             &mut framed,
             nar_size,
@@ -144,6 +150,7 @@ pub(super) async fn handle_add_to_store_nar<R: AsyncRead + Unpin + Send, W: Asyn
         {
             stderr_err!(stderr, "store error: {e}");
         }
+        // FALL THROUGH to the sentinel probe — do NOT early-return Ok.
     }
 
     // Drain to sentinel. After nar_size bytes, only the u64(0) frame
@@ -271,9 +278,12 @@ async fn drain_put_tasks(
             Ok((_, Ok(()))) => {}
             Err(je) => {
                 // Cancelled or panicked. Report at u64::MAX so any real
-                // wire-index error wins lowest-index. Shouldn't happen in
-                // practice — we never call abort, and grpc_put_path doesn't
-                // panic on store errors.
+                // wire-index error wins lowest-index. Shouldn't happen
+                // in practice — we never call abort, and
+                // grpc_put_path_singleflight doesn't panic on store
+                // errors (its mutex `.lock()`s use
+                // `unwrap_or_else(into_inner)` so a poisoned
+                // singleflight mutex degrades, not panics, here).
                 if first.is_none() {
                     first = Some((u64::MAX, anyhow::anyhow!("PutPath task join: {je}")));
                 }
@@ -291,10 +301,6 @@ pub(super) async fn handle_add_to_store<R: AsyncRead + Unpin, W: AsyncWrite + Un
     stderr: &mut StderrWriter<&mut W>,
     ctx: &mut SessionContext,
 ) -> anyhow::Result<()> {
-    let store_client = &mut ctx.store_client;
-    let jwt_token = ctx.jwt.token();
-    let service_signer = ctx.service_signer.as_deref();
-    let drv_cache = &mut ctx.drv_cache;
     let name = wire::read_string(reader).await?;
     let cam_str = wire::read_string(reader).await?;
     let references = wire::read_strings(reader).await?;
@@ -379,7 +385,7 @@ pub(super) async fn handle_add_to_store<R: AsyncRead + Unpin, W: AsyncWrite + Un
         }
     };
 
-    try_cache_drv(&path, &nar_data, drv_cache);
+    try_cache_drv(&path, &nar_data, &mut ctx.drv_cache);
 
     // nar_hash is SHA-256 -> exactly 32 bytes. The try_into cannot fail in
     // practice (NixHash::compute(SHA256, ..) always yields 32 bytes) but we
@@ -390,7 +396,10 @@ pub(super) async fn handle_add_to_store<R: AsyncRead + Unpin, W: AsyncWrite + Un
     };
     let info = path_info_for_computed(path.clone(), nar_hash_32, nar_size, ref_paths, ca.clone());
 
-    if let Err(e) = grpc_put_path(store_client, jwt_token, service_signer, info, nar_data).await {
+    // r[impl gw.put.singleflight+2]
+    if let Err(e) =
+        grpc_put_path_singleflight(ctx.put_ctx(), FOLLOWER_WAIT_CAP, info, nar_data).await
+    {
         stderr_err!(stderr, "store error: {e}");
     }
 
@@ -424,10 +433,6 @@ pub(super) async fn handle_add_text_to_store<R: AsyncRead + Unpin, W: AsyncWrite
     stderr: &mut StderrWriter<&mut W>,
     ctx: &mut SessionContext,
 ) -> anyhow::Result<()> {
-    let store_client = &mut ctx.store_client;
-    let jwt_token = ctx.jwt.token();
-    let service_signer = ctx.service_signer.as_deref();
-    let drv_cache = &mut ctx.drv_cache;
     let name = wire::read_string(reader).await?;
     let text = wire::read_string(reader).await?;
     let references = wire::read_strings(reader).await?;
@@ -478,7 +483,7 @@ pub(super) async fn handle_add_text_to_store<R: AsyncRead + Unpin, W: AsyncWrite
         rio_nix::store_path::nixbase32::encode(content_hash.digest())
     );
 
-    try_cache_drv(&path, &nar_data, drv_cache);
+    try_cache_drv(&path, &nar_data, &mut ctx.drv_cache);
 
     let nar_hash_32: [u8; 32] = match nar_hash.digest().try_into() {
         Ok(h) => h,
@@ -486,7 +491,10 @@ pub(super) async fn handle_add_text_to_store<R: AsyncRead + Unpin, W: AsyncWrite
     };
     let info = path_info_for_computed(path.clone(), nar_hash_32, nar_size, ref_paths, ca);
 
-    if let Err(e) = grpc_put_path(store_client, jwt_token, service_signer, info, nar_data).await {
+    // r[impl gw.put.singleflight+2]
+    if let Err(e) =
+        grpc_put_path_singleflight(ctx.put_ctx(), FOLLOWER_WAIT_CAP, info, nar_data).await
+    {
         stderr_err!(stderr, "store error: {e}");
     }
 
@@ -557,10 +565,20 @@ pub(super) async fn handle_add_multiple_to_store<R: AsyncRead + Unpin, W: AsyncW
     stderr: &mut StderrWriter<&mut W>,
     ctx: &mut SessionContext,
 ) -> anyhow::Result<()> {
-    let service_signer = ctx.service_signer.clone();
+    let service_signer = ctx.shared.service_signer.clone();
     let store_client = &mut ctx.store_client;
-    let jwt_token = ctx.jwt.token();
+    // `&mut SessionJwt` (not a once-snapshot `token()`) so the
+    // per-iteration `token_owned()`/`token()` calls below lazily
+    // re-mint near expiry — consistent with the `put_ctx()` callers.
+    // Disjoint-field borrow alongside `store_client`/`drv_cache`.
+    let jwt = &mut ctx.jwt;
     let drv_cache = &mut ctx.drv_cache;
+    // `NormalizedName` is `Arc<str>`-backed: per-iter clone is a
+    // pointer bump (8 bytes), not a heap alloc — at 45k entries
+    // (I-052) a String-backed clone here was ~45k heap allocations
+    // dead-weighted on the path the feature was added to optimize.
+    let tenant_name = ctx.tenant_name.clone();
+    let put_singleflight = ctx.shared.put_singleflight.clone();
     let _repair = wire::read_bool(reader).await?;
     let _dont_check_sigs = wire::read_bool(reader).await?;
 
@@ -611,7 +629,6 @@ pub(super) async fn handle_add_multiple_to_store<R: AsyncRead + Unpin, W: AsyncW
     // 45k entries that's ~31 minutes before any build starts. 32-way
     // overlap targets ~1 minute.
     let mut tasks: JoinSet<(u64, anyhow::Result<()>)> = JoinSet::new();
-    let jwt_owned: Option<String> = jwt_token.map(str::to_owned);
     let span = tracing::Span::current();
 
     let mut fail: Option<(u64, anyhow::Error)> = None;
@@ -663,14 +680,28 @@ pub(super) async fn handle_add_multiple_to_store<R: AsyncRead + Unpin, W: AsyncW
             }
 
             let mut client = store_client.clone();
-            let jwt = jwt_owned.clone();
+            let jwt_owned = jwt.token_owned();
             let svc = service_signer.clone();
             let path_str = head.path_str;
             let info = head.info;
+            let tenant = tenant_name.clone();
+            let sf = put_singleflight.clone();
             tasks.spawn(
                 async move {
+                    // r[impl gw.put.singleflight+2]
+                    // PIPELINE_FOLLOWER_WAIT_CAP (5s, not
+                    // FOLLOWER_WAIT_CAP): this task blocks the
+                    // wire-read pipeline at backpressure depth; a long
+                    // wait stalls the whole batch.
+                    let put = PutCtx {
+                        store_client: &mut client,
+                        jwt_token: jwt_owned.as_deref(),
+                        service_signer: svc.as_deref(),
+                        sf: &sf,
+                        tenant: tenant.as_ref(),
+                    };
                     let r =
-                        grpc_put_path(&mut client, jwt.as_deref(), svc.as_deref(), info, nar_data)
+                        grpc_put_path_singleflight(put, PIPELINE_FOLLOWER_WAIT_CAP, info, nar_data)
                             .await
                             .map(|_| ())
                             .map_err(|e| {
@@ -695,10 +726,25 @@ pub(super) async fn handle_add_multiple_to_store<R: AsyncRead + Unpin, W: AsyncW
                     "oversize .drv NAR — streaming (not cached; resolve_derivation fetches from store later)"
                 );
             }
-            if let Err(e) = grpc_put_path_streaming(
+            // Streaming: every caller uploads; the singleflight
+            // registry participates only as a wait signal on
+            // Aborted+CONCURRENT inside grpc_put_path_streaming (other
+            // Errs surface immediately). On every Ok return `framed`
+            // is at the next entry's header.
+            // PIPELINE_FOLLOWER_WAIT_CAP (5s, not FOLLOWER_WAIT_CAP):
+            // this branch runs synchronously inside the per-entry
+            // loop — same batch-stall hazard as the spawned-task
+            // branch.
+            let put = PutCtx {
                 store_client,
-                jwt_token,
-                service_signer.as_deref(),
+                jwt_token: jwt.token(),
+                service_signer: service_signer.as_deref(),
+                sf: &put_singleflight,
+                tenant: tenant_name.as_ref(),
+            };
+            if let Err(e) = grpc_put_path_streaming(
+                put,
+                PIPELINE_FOLLOWER_WAIT_CAP,
                 head.info,
                 &mut framed,
                 head.nar_size,

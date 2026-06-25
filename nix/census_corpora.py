@@ -868,6 +868,18 @@ DURATION_CENSUS_ROWS = {
         "wall (tokio Instant elapsed at the dag-actor's own per-sweep stamp — the AttemptBudget min(grpc_timeout, BUDGET) and the post-FMP started.elapsed() skip gate share the same Instant domain as the lease guard's SELF_FENCE_AFTER it derives from)",
         "sh-044 (d0427e56a): named SELF_FENCE_AFTER/2 by const checked_div — same-domain by derivation; W: probe_sweep_hung_tenants_are_capped_by_the_min asserts the AttemptBudget cap is exactly grpc_timeout.min(DISPATCH_PROBE_SWEEP_BUDGET)",
     ),
+    ("rio-proto/src/lib.rs", "DEFAULT_CONCURRENT_PUT_WAIT"): (
+        "wall (rio-store: tokio::time::timeout over the in-flight uploader's placeholder-heartbeat poll — same tokio runtime clock as the chunked-upload it waits on)",
+        "store.put.concurrent-wait: literal 60s in rio-proto as a wire-protocol contract — rio-store's wait_for_concurrent_put budget; rio-gateway's FOLLOWER_WAIT_CAP is const-asserted ≤ half this value so a one-sided bump cannot misalign the gateway's fail-open against the store's wait. Sized to cover a typical chunked S3 upload of a large NAR while staying ≪ GRPC_STREAM_TIMEOUT (300s). W: store-side concurrent-wait covered by rio-store/tests/put_path",
+    ),
+    ("rio-gateway/src/handler/singleflight.rs", "FOLLOWER_WAIT_CAP"): (
+        "wall (tokio::time::timeout over the follower's semaphore acquire; same tokio runtime clock as the leader's tx.send per-chunk idle bound)",
+        "gw.put.singleflight: literal 30s — const-asserted ≤ half rio_proto::DEFAULT_CONCURRENT_PUT_WAIT (60s) so an LB/SSH idle timeout tuned ≥ the store wait does not fire on a follower's silence; a one-sided bump of either constant cannot misalign past that bound. Defensive backstop, NOT derived from leader's progress bound — a wedged-CLIENT leader (read_exact stalled) is its own session's problem and is NOT bounded; followers wait this cap then fail-open. W: follower_wait_bounded_times_out_on_wedged_leader asserts timeout returns false under start_paused",
+    ),
+    ("rio-gateway/src/handler/singleflight.rs", "PIPELINE_FOLLOWER_WAIT_CAP"): (
+        "wall (tokio::time::timeout over the follower's semaphore acquire; same tokio runtime clock as the JoinSet backpressure await it bounds)",
+        "gw.put.singleflight: literal 5s; the opcode-44 pipeline wait_cap (BOTH the spawned-task buffer branch and the synchronous oversize-streaming branch) — at ADD_MULTIPLE_PIPELINE_DEPTH=32 join_next() blocks the wire-read, so a FOLLOWER_WAIT_CAP-long wait stalls the whole batch. Honest worst-case task latency is 5s wait + ~6s grpc_put_path retry ≈ 11s (vs ~6s pre-singleflight); the Leader drops its guard after the FIRST attempt so a follower of a retrying leader wakes after ~one RTT, not the full budget. W: const_assert PIPELINE_FOLLOWER_WAIT_CAP < FOLLOWER_WAIT_CAP pins the ordering; follower_wait_bounded_times_out_on_wedged_leader covers the timeout branch",
+    ),
 }
 DURATION_GRANDFATHER = "nix/duration-census-grandfather.txt"
 

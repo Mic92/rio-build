@@ -13,8 +13,38 @@ pub mod server;
 pub mod session;
 pub(crate) mod translate;
 
+pub use handler::singleflight::PutSingleflight;
 pub use quota::QuotaCache;
 pub use ratelimit::{RateLimitConfig, TenantLimiter};
+
+/// Per-process shared state cloned into every protocol session. All
+/// fields are `Arc`-backed: clones share the same per-tenant rate
+/// buckets, quota cache, PutPath in-flight map, and service-HMAC
+/// signer. One instance lives on `GatewayServer`; `run_protocol` and
+/// `SessionContext::new` take it instead of N separate params
+/// (collapses the 9/10-arg signatures that grew one field per round).
+/// `Default` builds the disabled-limiter / empty-cache / empty-map /
+/// no-signer tuple every test caller previously open-coded.
+#[derive(Clone, Default)]
+pub struct SessionShared {
+    /// `r[gw.rate.per-tenant]` — disabled by default.
+    pub limiter: TenantLimiter,
+    /// `r[store.gc.tenant-quota-enforce]` — 30s-TTL cache. Always
+    /// enabled: single-tenant mode (empty `tenant_name`) skips the
+    /// check inside the cache, so there is no disabled variant — do
+    /// NOT add a `QuotaCache::disabled()` by symmetry with
+    /// `TenantLimiter::disabled()`.
+    pub quota_cache: QuotaCache,
+    /// `r[gw.put.singleflight]` — per-process PutPath in-flight registry.
+    pub put_singleflight: PutSingleflight,
+    /// Service-identity HMAC signer (`RIO_SERVICE_HMAC_KEY_PATH`).
+    /// Attached as `x-rio-service-token` on store `PutPath` so the
+    /// store grants the service-token bypass. `None` = disabled (dev
+    /// mode). Folded into `SessionShared` rather than threaded
+    /// separately so the next per-process field added here doesn't
+    /// re-grow `run_protocol`/`SessionContext::new` arg lists.
+    pub service_signer: Option<std::sync::Arc<rio_auth::hmac::HmacSigner>>,
+}
 pub use server::{
     AUTHORIZED_KEYS_POLL_INTERVAL, GatewayServer, load_authorized_keys, load_or_generate_host_key,
     spawn_authorized_keys_watcher,
@@ -120,6 +150,27 @@ pub fn describe_metrics() {
         "PutPath retries on store Code::Aborted (labeled by attempt). \
          attempt=PUT_PATH_ABORTED_MAX_ATTEMPTS means budget exhausted and the \
          error surfaced to the client (I-168)."
+    );
+    // NOT in ALERT_SEEDED_COUNTERS — observability-only, no alert
+    // references it. SeededSeries is single-axis; if an alert is
+    // added, extend SeededSeries to multi-axis (lane × outcome) first.
+    describe_counter!(
+        "rio_gateway_putpath_singleflight_total",
+        "Per-process PutPath singleflight dispositions, labeled by lane \
+         (buffered, streaming) and outcome (leader = first caller for \
+         (tenant, path), uploads; follower = streaming-lane acquire-time, \
+         an in-process leader exists, this caller uploads anyway; \
+         coalesced = follower waited on leader signal and QueryPathInfo \
+         found the path; follower_miss = follower waited but the path was \
+         absent — leader failed/cancelled/wedged — OR the QPI probe itself \
+         failed transiently, debug-logged: a degraded QPI plane inflates \
+         this label; non-transient QPI errors propagate). \
+         Buffered: one of leader|coalesced|follower_miss per call; \
+         coalesced/(coalesced+leader+follower_miss) is the dedup ratio. \
+         Streaming: one of leader|follower per acquire (so \
+         sum({lane=streaming,outcome=~leader|follower}) counts every \
+         streaming call); coalesced/follower_miss are ADDITIONAL emissions \
+         on Aborted+CONCURRENT only — NOT a ratio denominator."
     );
     describe_counter!(
         "rio_gateway_putpath_retry_events_total",

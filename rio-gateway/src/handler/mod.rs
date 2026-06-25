@@ -26,9 +26,6 @@ use tracing::{instrument, warn};
 
 use rio_common::tenant::NormalizedName;
 
-use crate::quota::QuotaCache;
-use crate::ratelimit::TenantLimiter;
-
 const PROGRAM_NAME: &str = "rio-gateway";
 
 // r[impl gw.jwt.issue]
@@ -368,24 +365,14 @@ pub struct SessionContext {
     /// (downstream reads `tenant_name` from the proto body instead).
     /// See `r[gw.jwt.issue]` / `r[gw.jwt.dual-mode]`.
     pub jwt: SessionJwt,
-    /// Service-identity HMAC signer keyed with
-    /// `RIO_SERVICE_HMAC_KEY_PATH`. Attached as `x-rio-service-token`
-    /// on store `PutPath` calls so the store grants the service-token
-    /// bypass on PutPath. `None` = disabled (dev
-    /// mode). `Arc` because the spawned tasks in
-    /// `handle_add_multiple_to_store` need an owned clone.
-    pub service_signer: Option<std::sync::Arc<rio_auth::hmac::HmacSigner>>,
-    /// Per-tenant build-submit rate limiter. Checked in the build
-    /// opcode handlers before `SubmitBuild`. Disabled by default
-    /// (the disabled variant's `check()` is a no-op). Shared state
-    /// via inner `Arc` — all sessions on all connections drain the
-    /// same per-tenant bucket. See `r[gw.rate.per-tenant]`.
-    pub limiter: TenantLimiter,
-    /// Per-tenant store-quota cache. Checked alongside `limiter`
-    /// before `SubmitBuild`. Shared state via inner `Arc` — a quota
-    /// fetched by one session is warm for all within the 30s TTL.
-    /// See `r[store.gc.tenant-quota-enforce]`.
-    pub quota_cache: QuotaCache,
+    /// Per-process shared state (rate limiter, quota cache, PutPath
+    /// singleflight, service-HMAC signer). Stored as the
+    /// [`SessionShared`](crate::SessionShared) struct itself — every
+    /// future shared field lands there with zero edits here (the
+    /// destructure-then-spread that previously lived in `new`
+    /// reproduced the arg-count creep `SessionShared` was introduced
+    /// to stop, one layer down).
+    pub shared: crate::SessionShared,
     /// Negotiated worker-protocol version (`min(client, server)`). Set
     /// by [`crate::session::run_protocol_loop`] after handshake; defaults
     /// to [`PROTOCOL_VERSION`](rio_nix::protocol::handshake::PROTOCOL_VERSION).
@@ -401,20 +388,13 @@ pub struct SessionContext {
 }
 
 impl SessionContext {
-    // 8 args is one over clippy's default of 7 — same trade-off as
-    // `session::run_protocol` (the only production caller): three gRPC
-    // clients + five session-scoped knobs, and a builder/struct-param
-    // wrapper would add more noise than the extra arg costs.
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         store_client: StoreServiceClient<Channel>,
         log_client: LogServiceClient<Channel>,
         scheduler_client: SchedulerServiceClient<Channel>,
         tenant_name: Option<NormalizedName>,
         jwt: SessionJwt,
-        service_signer: Option<std::sync::Arc<rio_auth::hmac::HmacSigner>>,
-        limiter: TenantLimiter,
-        quota_cache: QuotaCache,
+        shared: crate::SessionShared,
     ) -> Self {
         Self {
             store_client,
@@ -425,9 +405,7 @@ impl SessionContext {
             active_build_ids: HashSet::new(),
             tenant_name,
             jwt,
-            service_signer,
-            limiter,
-            quota_cache,
+            shared,
             negotiated_version: rio_nix::protocol::handshake::PROTOCOL_VERSION,
             handshake_timeout: crate::session::HANDSHAKE_TIMEOUT,
         }
@@ -527,6 +505,11 @@ pub(crate) mod grpc;
 mod log_tail;
 mod opcodes_read;
 mod opcodes_write;
+pub(crate) mod put_path;
+pub(crate) mod singleflight;
+// PutSingleflight re-exported at the crate root only (`lib.rs`); a
+// second `handler::PutSingleflight` path is dead surface and `cargo
+// doc` lists the type twice.
 
 use build::{handle_build_derivation, handle_build_paths, handle_build_paths_with_results};
 use opcodes_read::{

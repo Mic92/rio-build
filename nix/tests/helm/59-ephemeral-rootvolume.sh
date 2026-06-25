@@ -26,7 +26,7 @@ rm -rf "$T"; mkdir -p "$T"
 render_karpenter -s templates/karpenter.yaml > "$T/render.yaml"
 
 # Every EBS-only NodeClass: the xvdb mapping carries rootVolume:true,
-# and it is the ONLY mapping that does (the CRD allows at most one).
+# and it is the only mapping that does (the CRD allows at most one).
 for nc in rio-default rio-default-express rio-metal rio-fetcher; do
   yq -N "select(.kind==\"EC2NodeClass\" and .metadata.name==\"$nc\")" \
      "$T/render.yaml" > "$T/$nc.yaml"

@@ -19,6 +19,11 @@ use rio_proto::{StoreServiceClient, types};
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tonic::transport::Channel;
 
+use super::put_path::{
+    PutCtx, SfLane, SfOutcome, WaitOutcome, emit_outcome, is_actionable_qpi_err,
+    wait_then_qpi_if_follower,
+};
+use super::singleflight::{Disposition, LeaderGuard};
 use super::{GatewayError, attach_service_token, jwt_metadata, with_jwt};
 use crate::translate;
 
@@ -98,22 +103,135 @@ fn transient_retry_after(
 
 /// Consume `remaining` bytes from `nar_reader` into `/dev/null` —
 /// honours the "reads exactly nar_size bytes" wire-positioning contract
-/// callers depend on when the PutPath pump exits early (rx-dropped or
-/// idle-timeout). One drain implementation; a future fix (short-read
-/// handling, read_exact-style loop) lands here, not at two sites.
+/// callers depend on when the PutPath pump exits early (rx-dropped,
+/// idle-timeout). Short read → typed `NarRead`/`UnexpectedEof` so a
+/// truncated client stream surfaces with a position, not as garbage at
+/// the next entry's header parse.
 async fn drain_nar_remaining<R: AsyncRead + Unpin>(
     nar_reader: &mut R,
     remaining: u64,
     nar_size: u64,
     why: &str,
 ) -> anyhow::Result<()> {
-    tokio::io::copy(&mut nar_reader.take(remaining), &mut tokio::io::sink())
+    let copied = tokio::io::copy(&mut nar_reader.take(remaining), &mut tokio::io::sink())
         .await
         .map_err(|e| GatewayError::NarRead {
             context: format!("draining {remaining} of {nar_size} after {why}"),
             source: e,
         })?;
+    if copied < remaining {
+        return Err(GatewayError::NarRead {
+            context: format!("{why}: short read ({copied} of {remaining}, total {nar_size})"),
+            source: std::io::ErrorKind::UnexpectedEof.into(),
+        }
+        .into());
+    }
     Ok(())
+}
+
+/// Streaming-Aborted lane: poll-then-adopt after the store returned
+/// `Aborted("concurrent PutPath in progress")`. Owns the FULL
+/// `attempt="1"..=PUT_PATH_ABORTED_MAX_ATTEMPTS` emit range —
+/// `attempt="1"` at entry (so every Aborted+CONCURRENT counts,
+/// signal-adopted or not, matching the buffered lane's loop-head emit
+/// shape), then `attempt` in `2..=PUT_PATH_ABORTED_MAX_ATTEMPTS` per
+/// poll miss. The caller does NOT pre-emit; the emit-shape contract
+/// (`1..=8` each exactly once on exhaust) lives in ONE function. Same
+/// emit-count and poll-count shape as [`grpc_put_path`]'s buffered
+/// retry loop (single-axis schema shared with that lane: same
+/// store-side contention, same dashboard cell;
+/// `attempt=PUT_PATH_ABORTED_MAX_ATTEMPTS` is the budget-exhausted
+/// signal). The per-iteration body differs (replay-from-buffer vs
+/// QPI-poll) AND the buffered loop interleaves Aborted with
+/// transient-retry; the emit/exhaust SHAPE both produce
+/// (`attempt="1".."8"`, exhaust at 8) is pinned by
+/// `putpath_aborted_retry_emit_shape_pinned_across_lanes`, and
+/// `putpath_retry_attempt_axis_matches_the_emit_law` pins the seeded
+/// label set to the const.
+///
+/// `signal_adopted`: `true` if the caller's pre-poll signal-wait QPI
+/// already found the path — the helper emits `attempt="1"` (one
+/// Aborted observation) and returns `Ok(false)` without polling.
+///
+/// The original Aborted status was ALREADY surfaced at the rpc match
+/// in [`grpc_put_path_streaming`] (one operation, one observation per
+/// the bug_118 emit law); on budget exhaust it is returned verbatim
+/// WITHOUT re-surfacing — the caller propagates `?`. A QPI error
+/// mid-poll is split by [`is_actionable_qpi_err`] (deny-list):
+/// actionable (PermissionDenied, InvalidArgument, …) propagates
+/// immediately — the user sees it, not the original Aborted after a
+/// futile ~6s poll; everything else (DeadlineExceeded / Internal /
+/// Cancelled / the transient set / non-`Status` roots) is debug-logged
+/// and treated as not-yet-present (continue polling) — symmetric with
+/// [`wait_then_qpi_if_follower`]: QueryPathInfo is a PROBE, its
+/// infra-failure does not change the PutPath outcome (NOT a PutPath
+/// observation; the emit law binds to the operation). Under a degraded
+/// QPI plane (infra errors while PutPath works), the budget exhausts
+/// and the original Aborted surfaces — same as if every poll returned
+/// NotFound.
+pub(super) async fn poll_adopt_after_aborted(
+    store_client: &mut StoreServiceClient<Channel>,
+    jwt_token: Option<&str>,
+    store_path: &StorePath,
+    original_status: tonic::Status,
+    signal_adopted: bool,
+) -> anyhow::Result<bool> {
+    // attempt=1: every Aborted+CONCURRENT counts (signal-adopted or
+    // not), matching the buffered lane's loop-head emit shape.
+    metrics::counter!(
+        "rio_gateway_putpath_aborted_retries_total",
+        "attempt" => "1",
+    )
+    .increment(1);
+    if signal_adopted {
+        return Ok(false);
+    }
+    for attempt in 1..PUT_PATH_ABORTED_MAX_ATTEMPTS {
+        let delay = PUT_PATH_BACKOFF.duration(attempt - 1);
+        tracing::debug!(
+            %store_path, attempt, backoff = ?delay, lane = "streaming",
+            "PutPath: polling for the concurrent uploader's result"
+        );
+        tokio::time::sleep(delay).await;
+        match grpc_query_path_info(store_client, jwt_token, store_path.as_str()).await {
+            Ok(Some(_)) => {
+                tracing::debug!(
+                    %store_path, attempt, lane = "streaming",
+                    "PutPath: adopted concurrent uploader's result"
+                );
+                return Ok(false);
+            }
+            Ok(None) => {}
+            // Actionable (PermissionDenied, InvalidArgument, … — the
+            // is_actionable_qpi_err deny-list): propagate so the user
+            // sees it instead of the original Aborted after a futile
+            // ~6s poll. Everything else (DeadlineExceeded / Internal /
+            // Cancelled / the transient set, non-Status roots —
+            // grpc_query_path_info already retried the transient set):
+            // treat as not-yet-present, keep polling; on exhaust,
+            // surface the ORIGINAL Aborted.
+            Err(e) if is_actionable_qpi_err(&e) => return Err(e),
+            Err(e) => {
+                tracing::debug!(
+                    %store_path, attempt, error = %e, lane = "streaming",
+                    "PutPath: poll QPI probe failed non-actionably; treating as not-yet-present"
+                );
+            }
+        }
+        // Poll N missed → record attempt N+1. The final iteration
+        // emits PUT_PATH_ABORTED_MAX_ATTEMPTS, the budget-exhausted
+        // signal, then falls through to surface.
+        metrics::counter!(
+            "rio_gateway_putpath_aborted_retries_total",
+            "attempt" => (attempt + 1).to_string(),
+        )
+        .increment(1);
+    }
+    tracing::warn!(
+        %store_path, attempts = PUT_PATH_ABORTED_MAX_ATTEMPTS, lane = "streaming",
+        "PutPath: still absent after wait-then-adopt budget; surfacing"
+    );
+    Err(original_status.into())
 }
 
 /// Query PathInfo from store via gRPC. Returns None if NOT_FOUND.
@@ -142,10 +260,16 @@ pub(crate) async fn grpc_query_path_info(
                 attempt += 1;
                 match transient_retry_after("QueryPathInfo", attempt, &status, false) {
                     Some(delay) => tokio::time::sleep(delay).await,
+                    // Status preserved as the anyhow root (downcast-able
+                    // — `is_actionable_qpi_err` keys on it). The
+                    // context embeds the status display so `{e}` at
+                    // `stderr_err!` callers carries it (drops the
+                    // pre-change `store gRPC: ` prefix from the old
+                    // `GatewayError::Store` variant; `{e:#}` repeats
+                    // the status once — `{e}` is the intended display).
                     None => {
-                        return Err(
-                            GatewayError::Store(format!("QueryPathInfo failed: {status}")).into(),
-                        );
+                        let msg = format!("QueryPathInfo failed: {status}");
+                        return Err(anyhow::Error::new(status).context(msg));
                     }
                 }
             }
@@ -340,12 +464,13 @@ fn surface_put_path_failure_any(err: anyhow::Error) -> anyhow::Error {
 
 /// Upload a path to the store via gRPC PutPath (metadata + NAR chunks).
 ///
-/// Retries on `Code::Aborted` (concurrent same-path upload — store's
+/// Retries on `Code::Aborted` — concurrent same-path upload (store's
 /// `put_path.rs` returns this when another writer holds the placeholder
-/// row). I-068: with the I-052 32-way pipeline × N clients × shared
-/// closure, collisions are guaranteed; before this retry the gateway
-/// surfaced Aborted as a hard wopAddMultipleToStore failure and the
-/// client died mid-push.
+/// row) OR PG serialization conflict (I-189; rio-common/src/grpc.rs
+/// documents both as the same retryable shed). I-068: with the I-052
+/// 32-way pipeline × N clients × shared closure, collisions are
+/// guaranteed; before this retry the gateway surfaced Aborted as a hard
+/// wopAddMultipleToStore failure and the client died mid-push.
 ///
 /// merged_bug_097: non-Aborted failures take the same-file transient
 /// lane ([`transient_retry_after`]) — the store's typed sheds
@@ -360,13 +485,22 @@ fn surface_put_path_failure_any(err: anyhow::Error) -> anyhow::Error {
 /// `nar_data` is held as `Arc<[u8]>` so each retry rebuilds the request
 /// stream without copying the buffer. `info` is `Clone` (cheap — strings
 /// and Vecs already heap-allocated).
-// r[impl gw.put.aborted-retry]
+///
+/// `first_attempt_guard`: the singleflight Leader's [`LeaderGuard`]
+/// (or `None` for fail-open / non-singleflight callers). Dropped via
+/// `.take()` after the FIRST store response (success or fail) — the
+/// guard's purpose is "signal followers when MY upload ATTEMPT is
+/// decided", not "when I've exhausted retries". Followers wake after
+/// one store RTT and retry concurrently from then on instead of
+/// serializing behind this caller's full ~6s budget.
+// r[impl gw.put.aborted-retry+2]
 pub(super) async fn grpc_put_path(
     store_client: &mut StoreServiceClient<Channel>,
     jwt_token: Option<&str>,
     service_signer: Option<&rio_auth::hmac::HmacSigner>,
     info: ValidatedPathInfo,
     nar_data: Vec<u8>,
+    mut first_attempt_guard: Option<LeaderGuard>,
 ) -> anyhow::Result<bool> {
     let nar: std::sync::Arc<[u8]> = nar_data.into();
     let mut attempt = 0u32;
@@ -374,6 +508,11 @@ pub(super) async fn grpc_put_path(
     loop {
         let stream =
             rio_proto::client::chunk_nar_for_put(info.clone(), std::sync::Arc::clone(&nar));
+        // emit-law exempt `?`: with_jwt's only fallible step is
+        // `MetadataValue::try_from(base64url-ASCII)`, which cannot
+        // fail on a real JWT (handler/mod.rs documents the `?` as
+        // defensive). A failure here would be a programmer error in
+        // rio_auth's encoding, not a PutPath observation.
         let mut req = with_jwt(stream, jwt_token)?;
         attach_service_token(&mut req, service_signer);
         let result = rio_common::grpc::with_timeout_status(
@@ -382,6 +521,11 @@ pub(super) async fn grpc_put_path(
             store_client.put_path(req),
         )
         .await;
+        // First store response observed — signal any followers. From
+        // this point on (retry or terminal), every caller is
+        // concurrent (the pre-singleflight shape). Idempotent: `.take()`
+        // is None on every later iteration.
+        drop(first_attempt_guard.take());
         let status = match result {
             Ok(resp) => return Ok(resp.into_inner().created),
             // THE class-labeled emit law (merged_bug_038, H8″; bound
@@ -396,6 +540,17 @@ pub(super) async fn grpc_put_path(
             // surfacing fn IS the emit site (one per module).
             Err(status) => surface_put_path_failure(status),
         };
+        // Buffered lane: retry on any Code::Aborted — the store
+        // returns Aborted for placeholder-contention (I-068,
+        // CONCURRENT_PUTPATH_MSG) AND PG serialization conflicts
+        // (I-189; rio-common/src/grpc.rs:429), which both need this
+        // 8-attempt budget. The streaming lane uses the narrower
+        // `is_concurrent_putpath_aborted` predicate because it gates
+        // the wait-then-adopt (a PG-conflict has nobody to wait on;
+        // streaming can't replay regardless). The
+        // `putpath_aborted_retry_emit_shape_pinned_across_lanes` test
+        // pins this loop's emit/exhaust shape against
+        // `poll_adopt_after_aborted`'s.
         if status.code() == tonic::Code::Aborted {
             attempt += 1;
             // I-168: dashboard-visible retry budget (was log-only).
@@ -471,11 +626,33 @@ pub(super) async fn grpc_put_path(
 /// also fronts the race server-side (`store.put.concurrent-wait`),
 /// resolving as `created: false` once the in-flight winner commits;
 /// an Aborted only escapes when the winner outlives BOTH wait budgets.
-// r[impl gw.put.aborted-retry]
+///
+/// `r[gw.put.singleflight]` participation is signal-only: every
+/// streaming caller registers in the singleflight map at entry (one
+/// becomes the registry Leader, the rest Followers) and uploads
+/// regardless — no precheck, no buffer. The registry's only effect is
+/// on Aborted+CONCURRENT: a Follower whose own upload hit the
+/// placeholder-contention `Aborted` waits on the in-process leader's
+/// completion signal then QPI ([`wait_then_qpi_if_follower`]) before
+/// falling back to the budget poll. Other Errs surface immediately
+/// (non-retryable rejection or wire mispositioned). The `guard`
+/// (Leader) is dropped before any post-attempt poll so a Follower's
+/// signal-wait does not span this caller's poll budget.
+///
+/// `wait_cap`: the Follower's bounded signal-wait. Synchronous call
+/// sites (`handle_add_to_store_nar`, wire already past the NAR) pass
+/// [`FOLLOWER_WAIT_CAP`]; the opcode-44 oversize-streaming branch
+/// passes [`PIPELINE_FOLLOWER_WAIT_CAP`] (5s) — that branch runs
+/// inside the per-entry loop and a long wait stalls the whole batch
+/// with no progress to the client (the same hazard the spawned-task
+/// branch was capped for; pre-singleflight worst case here was ~6s).
+///
+/// [`FOLLOWER_WAIT_CAP`]: super::singleflight::FOLLOWER_WAIT_CAP
+/// [`PIPELINE_FOLLOWER_WAIT_CAP`]: super::singleflight::PIPELINE_FOLLOWER_WAIT_CAP
+// r[impl gw.put.aborted-retry+2]
 pub(super) async fn grpc_put_path_streaming<R: AsyncRead + Unpin>(
-    store_client: &mut StoreServiceClient<Channel>,
-    jwt_token: Option<&str>,
-    service_signer: Option<&rio_auth::hmac::HmacSigner>,
+    ctx: PutCtx<'_>,
+    wait_cap: std::time::Duration,
     info: ValidatedPathInfo,
     nar_reader: &mut R,
     nar_size: u64,
@@ -483,6 +660,43 @@ pub(super) async fn grpc_put_path_streaming<R: AsyncRead + Unpin>(
 ) -> anyhow::Result<bool> {
     // ~1 MiB in flight at 256 KiB chunks.
     const CHANNEL_BUF: usize = 4;
+
+    let PutCtx {
+        store_client,
+        jwt_token,
+        service_signer,
+        sf,
+        tenant,
+    } = ctx;
+
+    // r[impl gw.put.singleflight+2]
+    // Signal-only: every caller uploads. The guard/follower split is
+    // recorded so a Follower whose own upload hits Aborted+CONCURRENT
+    // can wait on the in-process leader's signal before the budget
+    // poll (other Errs surface immediately). Both arms emit at acquire
+    // (Leader|Follower) so `sum({lane="streaming"})` counts every
+    // streaming acquire — a follower whose own upload won the store
+    // race would otherwise emit nothing.
+    //
+    // Guard lifetime: held across the WHOLE pump (dropped at the
+    // explicit `drop(guard)` after the rpc result, or via RAII on the
+    // Ok / Pump::Failed early-returns) — unlike the buffered lane,
+    // which drops after the FIRST store response. There is only one
+    // attempt here (bytes consumed), so "first response" == "result";
+    // a same-path buffered follower (cross-opcode: opcode-44 ≤16 MiB
+    // entry vs an opcode-39 streaming caller) parks on this Leader for
+    // up to its `wait_cap` then fails open — bounded, no-worse than
+    // the pre-singleflight concurrent upload it falls back to.
+    let (guard, follower) = match sf.acquire(tenant, &info.store_path) {
+        Disposition::Leader(g) => {
+            emit_outcome(SfLane::Streaming, SfOutcome::Leader);
+            (Some(g), None)
+        }
+        Disposition::Follower(f) => {
+            emit_outcome(SfLane::Streaming, SfOutcome::Follower);
+            (None, Some(f))
+        }
+    };
 
     let (tx, rx) = tokio::sync::mpsc::channel::<types::PutPathRequest>(CHANNEL_BUF);
 
@@ -514,7 +728,9 @@ pub(super) async fn grpc_put_path_streaming<R: AsyncRead + Unpin>(
 
     // Drive the gRPC call. Clone: tonic Channel is Arc-backed.
     // JWT wrapped BEFORE the spawn — jwt_token's lifetime doesn't
-    // extend into the 'static task.
+    // extend into the 'static task. emit-law exempt `?`: see the
+    // identical note at the buffered lane's `with_jwt` call (cannot
+    // fail on a real base64url-ASCII JWT; programmer-error-only).
     let mut client = store_client.clone();
     let outbound = tokio_stream::wrappers::ReceiverStream::new(rx);
     let mut req = with_jwt(outbound, jwt_token)?;
@@ -589,6 +805,12 @@ pub(super) async fn grpc_put_path_streaming<R: AsyncRead + Unpin>(
         let mut chunk = vec![0u8; NAR_CHUNK_SIZE];
         while remaining > 0 {
             let n = (remaining.min(NAR_CHUNK_SIZE as u64)) as usize;
+            // No per-chunk CLIENT-side timeout: a nix client reading
+            // its source NAR off slow/contended storage may
+            // legitimately gap >GRPC_STREAM_TIMEOUT between chunks. A
+            // wedged client is its OWN session's problem; followers
+            // are bounded by `FOLLOWER_WAIT_CAP` (defensive backstop)
+            // and fail-open regardless.
             if let Err(e) = nar_reader.read_exact(&mut chunk[..n]).await {
                 return Pump::Failed(
                     GatewayError::NarRead {
@@ -729,57 +951,75 @@ pub(super) async fn grpc_put_path_streaming<R: AsyncRead + Unpin>(
         // lane's loop-head emit has the same shape).
         Err(status) => surface_put_path_failure(status),
     };
-    // sh-004: wait-then-adopt on the I-068 placeholder-contention
-    // Aborted. The reader is already drained to `nar_size` (the pump's
-    // rx-dropped arm above), so the framed reader stays positioned for
-    // the caller; the lane polls for the concurrent uploader's result
-    // instead of replaying. Precedent: rio-builder upload/single.rs
-    // is_concurrent_put_path → wait-then-adopt.
-    if status.code() == tonic::Code::Aborted
-        && status.message().contains(rio_proto::CONCURRENT_PUTPATH_MSG)
-    {
-        let mut attempt = 0u32;
-        loop {
-            attempt += 1;
-            // Single-axis {attempt} — shared schema with the buffered
-            // lane's emit above (same store-side contention, same
-            // dashboard cell; no lane label).
-            metrics::counter!(
-                "rio_gateway_putpath_aborted_retries_total",
-                "attempt" => attempt.to_string(),
-            )
-            .increment(1);
-            if attempt >= PUT_PATH_ABORTED_MAX_ATTEMPTS {
-                tracing::warn!(
-                    %store_path,
-                    attempts = attempt,
-                    "PutPath (streaming): concurrent uploader still absent \
-                     after wait-then-adopt budget; surfacing"
-                );
-                return Err(status.into());
+    // The guard's purpose is "signal followers when MY upload attempt
+    // is done" — it is. The Ok early-return above (and the
+    // Pump::Failed / task-join `?` arms further up) drop `guard` via
+    // RAII at the same instant they return — no extra latency. Only
+    // THIS arm continues into post-attempt work (signal-wait, budget
+    // poll); holding the guard through it would make a parked Follower
+    // wait this caller's full poll budget before its own, so drop
+    // explicitly here. Woken followers each poll independently (same
+    // as pre-singleflight; the signal saved them the upload, not the
+    // poll). N followers × 7 QPIs is bounded by the same N×8 PutPath
+    // attempts the pre-singleflight shape would have spent.
+    drop(guard);
+    // r[impl gw.put.singleflight+2]
+    // Signal-wait on Aborted+CONCURRENT only (other Errs surface
+    // immediately — non-retryable store rejection or wire
+    // mispositioned; the Pump::Failed and task-join `?` arms above
+    // return before this point for the same reason). On the I-068
+    // placeholder-contention Aborted, a Follower waits on the
+    // in-process leader's bounded signal then QPI before falling back
+    // to the budget poll.
+    if rio_proto::is_concurrent_putpath_aborted(&status) {
+        let signal_adopted = match follower {
+            Some(f) => {
+                match wait_then_qpi_if_follower(f, wait_cap, store_client, jwt_token, &store_path)
+                    .await?
+                {
+                    WaitOutcome::Adopted => {
+                        emit_outcome(SfLane::Streaming, SfOutcome::Coalesced);
+                        true
+                    }
+                    WaitOutcome::Miss => {
+                        emit_outcome(SfLane::Streaming, SfOutcome::FollowerMiss);
+                        false
+                    }
+                }
             }
-            let delay = PUT_PATH_BACKOFF.duration(attempt - 1);
-            tracing::debug!(
-                %store_path,
-                attempt,
-                backoff = ?delay,
-                "PutPath (streaming): store Aborted (concurrent PutPath); \
-                 polling for the concurrent uploader's result"
-            );
-            tokio::time::sleep(delay).await;
-            if grpc_query_path_info(store_client, jwt_token, store_path.as_str())
-                .await?
-                .is_some()
-            {
-                tracing::debug!(
-                    %store_path,
-                    attempt,
-                    "PutPath (streaming): adopted concurrent uploader's result"
-                );
-                return Ok(false);
-            }
-        }
+            None => false,
+        };
+        // sh-004: wait-then-adopt on the I-068 placeholder-contention
+        // Aborted. The reader is already drained to `nar_size` (the
+        // pump's rx-dropped arm above), so the framed reader stays
+        // positioned for the caller; the lane polls for the concurrent
+        // uploader's result instead of replaying. Precedent:
+        // rio-builder upload/chunked.rs
+        // `is_concurrent_putpath_aborted` → wait-then-adopt.
+        // bug_118 census: the original Aborted was already surfaced at
+        // the rpc match above; the helper returns it verbatim on
+        // budget-exhaust WITHOUT re-surfacing (one operation, one
+        // observation). The helper owns the FULL attempt=1..MAX emit
+        // range (no pre-emit here); QPI probe failures are split per
+        // is_actionable_qpi_err (symmetric with
+        // wait_then_qpi_if_follower).
+        return poll_adopt_after_aborted(
+            store_client,
+            jwt_token,
+            &store_path,
+            status,
+            signal_adopted,
+        )
+        .await;
     }
+    // Non-CONCURRENT failure (any non-Aborted, and Aborted-without-
+    // CONCURRENT_PUTPATH_MSG e.g. a PG serialization-conflict per
+    // I-189): surface immediately. Asymmetry vs the buffered lane
+    // (which retries every Aborted): this lane's bytes are consumed
+    // and cannot be replayed, and a non-CONCURRENT Aborted has no
+    // concurrent uploader to wait on — so `follower: Some(f)` is
+    // dropped unused here. Pre-singleflight surfaced identically; the
+    // signal-wait is strictly an Aborted+CONCURRENT optimization.
     Err(status.into())
 }
 
@@ -888,7 +1128,8 @@ mod tests {
             let info = put_info(&format!(
                 "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa{i}-shed-1.0"
             ));
-            let res = grpc_put_path(&mut client, None, None, info, NAR_FIXTURE.to_vec()).await;
+            let res =
+                grpc_put_path(&mut client, None, None, info, NAR_FIXTURE.to_vec(), None).await;
             assert!(
                 res.is_ok(),
                 "left: the {shed:?} shed hits the terminal arm and the push \
@@ -924,7 +1165,8 @@ mod tests {
                 .await
                 .expect("connect");
             let info = put_info("/nix/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-emit-1.0");
-            let res = grpc_put_path(&mut client, None, None, info, NAR_FIXTURE.to_vec()).await;
+            let res =
+                grpc_put_path(&mut client, None, None, info, NAR_FIXTURE.to_vec(), None).await;
             assert!(
                 res.is_ok(),
                 "one Unavailable then success must absorb; got {res:?}"
@@ -978,10 +1220,17 @@ mod tests {
             let mut nar_hash = vec![0u8; 32];
             hex::decode_to_slice(NAR_FIXTURE_SHA256, &mut nar_hash).expect("fixture hex");
             let mut reader = std::io::Cursor::new(NAR_FIXTURE.to_vec());
+            let sf = crate::handler::singleflight::PutSingleflight::new();
+            let ctx = PutCtx {
+                store_client: &mut client,
+                jwt_token: None,
+                service_signer: None,
+                sf: &sf,
+                tenant: None,
+            };
             let res = grpc_put_path_streaming(
-                &mut client,
-                None,
-                None,
+                ctx,
+                crate::handler::singleflight::FOLLOWER_WAIT_CAP,
                 info,
                 &mut reader,
                 NAR_FIXTURE.len() as u64,
@@ -1070,14 +1319,183 @@ mod tests {
              through the surfacing fn"
         );
 
-        // (3) the streaming lane's four terminal arms.
+        // (3) the streaming lane's four terminal arms. (The
+        // poll-adopt-after-aborted call is NOT a fifth: the original
+        // Aborted was already surfaced at the rpc match; the helper
+        // returns it verbatim without re-surfacing.)
         assert_eq!(
             streaming.matches("surface_put_path_failure").count(),
             4,
-            "streaming lane: four terminal arms (metadata-send, \
-             task-join, pump, rpc) each surface through the law; a \
-             changed count means an arm was added or bypassed — \
-             re-derive the census"
+            "streaming lane: four terminal arms (metadata-send, pump, \
+             task-join, rpc) each surface through the law; a changed \
+             count means an arm was added or bypassed — re-derive the \
+             census"
         );
+    }
+
+    /// The buffered Aborted loop and `poll_adopt_after_aborted` differ
+    /// in per-iteration body (replay-from-buffer vs QPI-poll; the
+    /// buffered loop also interleaves transient-retry). Pin the SHAPE
+    /// both produce — `attempt="1".."8"` exactly once
+    /// each, exhaust at 8 — so a drift in one loop's emit position
+    /// (loop-head vs post-body) or backoff index can't ship a
+    /// `attempt=8` budget-exhausted signal that fires on one lane and
+    /// not the other. `start_paused` so the ~6s of full-jitter backoff
+    /// in each lane is virtual time (in-process duplex transport per
+    /// `spawn_mock_store_inproc` — real TCP under start_paused fires
+    /// auto-advance during kernel accept, §2.7).
+    #[tokio::test(start_paused = true)]
+    async fn putpath_aborted_retry_emit_shape_pinned_across_lanes() {
+        let max = PUT_PATH_ABORTED_MAX_ATTEMPTS;
+        let attempt_key =
+            |a: u32| format!("rio_gateway_putpath_aborted_retries_total{{attempt={a}}}");
+
+        // Buffered: store returns Aborted on every attempt → exhaust.
+        let rec = rio_test_support::metrics::CountingRecorder::default();
+        let _g = metrics::set_default_local_recorder(&rec);
+        let (store, mut client) = rio_test_support::grpc::spawn_mock_store_inproc()
+            .await
+            .expect("inproc store");
+        store.faults.abort_next_puts.store(max, SeqCst);
+        let info = put_info("/nix/store/dddddddddddddddddddddddddddddddd-shape-1.0");
+        let res = grpc_put_path(&mut client, None, None, info, NAR_FIXTURE.to_vec(), None).await;
+        assert!(
+            res.is_err(),
+            "buffered: persistent Aborted must exhaust; got {res:?}"
+        );
+        for a in 1..=max {
+            assert_eq!(
+                rec.get(&attempt_key(a)),
+                1,
+                "buffered: attempt={a} must emit exactly once on exhaust; \
+                 keys: {:?}",
+                rec.all_keys()
+            );
+        }
+        drop(_g);
+
+        // Streaming-side: poll_adopt_after_aborted owns the FULL
+        // attempt=1..MAX range (emits attempt=1 at entry, then polls
+        // a never-seeded path → exhaust at attempt=8). Same store;
+        // path absent. No pre-emit at the call site.
+        let rec = rio_test_support::metrics::CountingRecorder::default();
+        let _g = metrics::set_default_local_recorder(&rec);
+        let path: rio_nix::store_path::StorePath =
+            "/nix/store/iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii-shape-1.0"
+                .parse()
+                .expect("path");
+        let res = poll_adopt_after_aborted(
+            &mut client,
+            None,
+            &path,
+            tonic::Status::aborted(rio_proto::CONCURRENT_PUTPATH_MSG),
+            false,
+        )
+        .await;
+        assert!(
+            res.is_err(),
+            "poll: never-seeded path must exhaust; got {res:?}"
+        );
+        for a in 1..=max {
+            assert_eq!(
+                rec.get(&attempt_key(a)),
+                1,
+                "streaming poll: attempt={a} must emit exactly once on \
+                 exhaust (helper owns 1..=MAX); keys: {:?}",
+                rec.all_keys()
+            );
+        }
+    }
+
+    /// `drain_nar_remaining`: a short-read (client EOF mid-NAR after
+    /// store early-Ok'd) returns a typed `NarRead`/`UnexpectedEof` so
+    /// the truncation surfaces with a position, not as garbage at the
+    /// next entry's header parse. Exact-length read returns `Ok(())`.
+    #[tokio::test]
+    async fn drain_nar_remaining_short_read_is_typed_eof() {
+        // 4 bytes available, 8 expected → short read.
+        let mut short = std::io::Cursor::new(vec![0u8; 4]);
+        let err = drain_nar_remaining(&mut short, 8, 16, "store early-Ok")
+            .await
+            .expect_err("short read must error");
+        let gw = err
+            .downcast_ref::<GatewayError>()
+            .expect("typed GatewayError");
+        assert!(
+            matches!(gw, GatewayError::NarRead { source, .. }
+                if source.kind() == std::io::ErrorKind::UnexpectedEof),
+            "short read must surface as NarRead/UnexpectedEof; got {gw:?}"
+        );
+        // Exact-length: drains cleanly.
+        let mut exact = std::io::Cursor::new(vec![0u8; 8]);
+        drain_nar_remaining(&mut exact, 8, 16, "store early-Ok")
+            .await
+            .expect("exact-length drain must succeed");
+    }
+
+    /// F2 structural property: the buffered Leader's guard is dropped
+    /// after the FIRST store response, not after the retry budget. A
+    /// follower of a leader whose first attempt Aborted wakes after
+    /// one store RTT (sem closed) instead of after the leader's full
+    /// ~6s. Structural assertion: under `start_paused`, a `yield_now`
+    /// poll loop prevents auto-advance — the leader's post-attempt-1
+    /// backoff sleep stays parked while we observe `inflight_len()==0`
+    /// AND `put_path_started==1` (guard dropped after exactly one
+    /// store call, before the retry).
+    #[tokio::test(start_paused = true)]
+    async fn buffered_leader_drops_guard_after_first_attempt() {
+        use crate::handler::singleflight::{Disposition, PutSingleflight};
+        let (store, mut client) = rio_test_support::grpc::spawn_mock_store_inproc()
+            .await
+            .expect("inproc store");
+        // Persistent Aborted — leader will exhaust its budget.
+        store
+            .faults
+            .abort_next_puts
+            .store(PUT_PATH_ABORTED_MAX_ATTEMPTS, SeqCst);
+        let sf = PutSingleflight::new();
+        let path: rio_nix::store_path::StorePath =
+            "/nix/store/gggggggggggggggggggggggggggggggg-guard-1.0"
+                .parse()
+                .expect("path");
+        let Disposition::Leader(g) = sf.acquire(None, &path) else {
+            panic!("first acquire must be leader")
+        };
+        let Disposition::Follower(f) = sf.acquire(None, &path) else {
+            panic!("second acquire must be follower")
+        };
+        assert_eq!(sf.inflight_len(), 1);
+        let leader = tokio::spawn(async move {
+            grpc_put_path(
+                &mut client,
+                None,
+                None,
+                put_info(path.as_str()),
+                NAR_FIXTURE.to_vec(),
+                Some(g),
+            )
+            .await
+        });
+        // Drive until the guard drops. yield_now() keeps this task
+        // runnable so auto-advance cannot fire the leader's backoff
+        // sleep — when inflight_len()==0 the leader is parked AT
+        // attempt 1's backoff, not past it.
+        while sf.inflight_len() != 0 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(
+            store.faults.put_path_started.load(SeqCst),
+            1,
+            "LeaderGuard must drop after the FIRST store response — held \
+             across retry means followers serialize behind the full ~6s \
+             budget (observed N>1 attempts before guard-drop)"
+        );
+        // Follower's sem is already closed → wait_bounded resolves
+        // signaled without auto-advance.
+        let signaled = f.wait_bounded(std::time::Duration::from_secs(3600)).await;
+        assert!(signaled, "follower must observe sem-closed, not timeout");
+        // Drain the leader (auto-advance now fires the backoff sleeps).
+        let r = leader.await.expect("join");
+        assert!(r.is_err(), "persistent Aborted must exhaust; got {r:?}");
     }
 }

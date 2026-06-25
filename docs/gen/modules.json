@@ -872,6 +872,16 @@
       "doc": "Write opcode handlers (add-to-store, add-text, add-multiple)."
     },
     {
+      "path": "handler/put_path.rs",
+      "depth": 1,
+      "doc": "`PutPath` lane wrappers over the pure [`super::singleflight`] mechanism."
+    },
+    {
+      "path": "handler/singleflight.rs",
+      "depth": 1,
+      "doc": "Per-process coalescing of concurrent uploads for the same `(tenant, store-path)`."
+    },
+    {
       "path": "lib.rs",
       "depth": 0,
       "doc": "SSH gateway and Nix protocol frontend for rio-build."

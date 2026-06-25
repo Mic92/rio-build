@@ -29,9 +29,8 @@ use tracing::{Instrument, debug, error, info, trace, warn};
 
 use super::AuthorizedKeys;
 use super::session_jwt::{mint_session_jwt, refresh_session_jwt};
+use crate::SessionShared;
 use crate::handler::SessionJwt;
-use crate::quota::QuotaCache;
-use crate::ratelimit::TenantLimiter;
 use crate::session::run_protocol;
 
 /// How far an SSH connection got before it ended. Stored as an
@@ -710,19 +709,13 @@ pub struct ConnectionHandler {
     /// ResolveTenant RPC timeout — gateway-only knob, lives here rather
     /// than on `JwtConfig` (scheduler/store never read it).
     pub(super) resolve_timeout: std::time::Duration,
-    /// Service-identity HMAC signer (`RIO_SERVICE_HMAC_KEY_PATH`).
-    /// Cloned into every `SessionContext` so write opcodes can attach
-    /// `x-rio-service-token` on store `PutPath`. `None` = disabled.
-    pub(super) service_signer: Option<Arc<rio_auth::hmac::HmacSigner>>,
-    /// Per-tenant rate limiter, cloned from `GatewayServer`. Passed
-    /// through to every spawned protocol session. Clones share the
-    /// underlying `dashmap` — the bucket for `tenant_name` "foo" is
-    /// the same `dashmap` entry regardless of which SSH connection
-    /// submits.
-    pub(super) limiter: TenantLimiter,
-    /// Per-tenant quota cache, cloned from `GatewayServer`. Shared
-    /// state — a quota fetched by one channel is warm for all.
-    pub(super) quota_cache: QuotaCache,
+    /// Per-process shared state cloned from `GatewayServer` (rate
+    /// limiter, quota cache, PutPath singleflight, service-HMAC
+    /// signer). All `Arc`-backed — the limiter bucket for
+    /// `tenant_name` "foo" / the quota cache entry / the singleflight
+    /// key are the same regardless of which SSH connection or channel
+    /// touches them.
+    pub(super) shared: SessionShared,
     /// Tenant name from the matched `authorized_keys` entry's comment
     /// field. Set in `auth_publickey` when a key matches. Passed to
     /// the scheduler as `SubmitBuildRequest.tenant_name` which resolves
@@ -1740,10 +1733,9 @@ impl Handler for ConnectionHandler {
         // would otherwise send an expired token).
         let jwt = self.session_jwt();
         // Shared-state clone: all channels on all connections drain
-        // the same per-tenant bucket.
-        let service_signer = self.service_signer.clone();
-        let limiter = self.limiter.clone();
-        let quota_cache = self.quota_cache.clone();
+        // the same per-tenant bucket / quota cache / singleflight map
+        // / service signer.
+        let shared = self.shared.clone();
         // Graceful-shutdown link: Drop fires this, run_protocol selects
         // on it. One token per channel — each channel's cancel loop is
         // independent. Child of the server-wide `sessions_shutdown`
@@ -1766,9 +1758,7 @@ impl Handler for ConnectionHandler {
                     &mut scheduler_client,
                     tenant_name,
                     jwt,
-                    service_signer,
-                    limiter,
-                    quota_cache,
+                    shared,
                     handshake_timeout,
                     shutdown_child,
                 )

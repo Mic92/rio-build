@@ -110,6 +110,7 @@ impl RioStack {
             sched_client,
             None,
             rio_gateway::handler::SessionJwt::none(),
+            rio_gateway::SessionShared::default(),
             rio_common::signal::Token::new(),
         );
 

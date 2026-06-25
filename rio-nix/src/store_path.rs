@@ -216,6 +216,14 @@ impl StorePath {
         nixbase32::encode(&self.hash.0)
     }
 
+    /// The 20-byte hash part as raw bytes (Copy). Uniquely identifies
+    /// the path independent of `name` (Nix store paths are keyed by
+    /// hash; the name is descriptive). Use this for in-memory map keys
+    /// where the heap `name`/`full` strings are dead weight.
+    pub fn hash_bytes(&self) -> [u8; HASH_BYTES] {
+        self.hash.0
+    }
+
     /// Check if this store path is a derivation (`.drv` extension).
     pub fn is_derivation(&self) -> bool {
         self.name.ends_with(".drv")

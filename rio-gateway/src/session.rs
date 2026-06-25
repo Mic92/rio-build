@@ -15,9 +15,8 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tonic::transport::Channel;
 use tracing::{debug, error, info, warn};
 
+use crate::SessionShared;
 use crate::handler::{self, SessionContext, with_jwt};
-use crate::quota::QuotaCache;
-use crate::ratelimit::TenantLimiter;
 
 /// Best-effort cancel of all builds tracked in `active_build_ids`.
 ///
@@ -157,11 +156,11 @@ pub const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_sec
 /// Runs the Nix worker protocol on separate read/write streams,
 /// delegating store operations to `StoreServiceClient` and build
 /// operations to `SchedulerServiceClient`.
-// 9 args is over clippy's default of 7. The alternatives
-// (grouping into a struct, or building SessionContext at the call
-// site) both add more noise than the extra args cost. The session
-// entry point is the natural narrowing-point: everything before is
-// SSH plumbing, everything after is protocol handling.
+// 10 args is three over clippy's default of 7. The session entry
+// point is the natural narrowing-point: everything before is SSH
+// plumbing, everything after is protocol handling. Further grouping
+// (e.g. the three gRPC clients) adds more noise than the extra args
+// cost.
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(
     name = "session",
@@ -178,14 +177,10 @@ pub async fn run_protocol<R, W>(
     scheduler_client: &mut SchedulerServiceClient<Channel>,
     tenant_name: Option<NormalizedName>,
     jwt: crate::handler::SessionJwt,
-    service_signer: Option<std::sync::Arc<rio_auth::hmac::HmacSigner>>,
-    // Per-tenant rate limiter, shared across all sessions via
-    // `Arc`-inside-`TenantLimiter`. Checked in the build handlers
-    // before `SubmitBuild`. Disabled limiter (default) is a no-op.
-    limiter: TenantLimiter,
-    // Per-tenant store-quota cache (30s TTL). Checked alongside
-    // `limiter` before `SubmitBuild`. Shared via inner `Arc`.
-    quota_cache: QuotaCache,
+    // Per-process shared state (rate limiter, quota cache, PutPath
+    // singleflight, service-HMAC signer) — all `Arc`-backed; clones
+    // share. See [`SessionShared`].
+    shared: SessionShared,
     // Max wait for `WORKER_MAGIC_1` through handshake completion.
     // Production passes `GatewayServer`'s setting (default
     // [`HANDSHAKE_TIMEOUT`]); tests shrink it.
@@ -208,9 +203,7 @@ where
         scheduler_client.clone(),
         tenant_name,
         jwt,
-        service_signer,
-        limiter,
-        quota_cache,
+        shared,
     );
     ctx.handshake_timeout = handshake_timeout;
     run_protocol_loop(reader, writer, &mut ctx, shutdown).await

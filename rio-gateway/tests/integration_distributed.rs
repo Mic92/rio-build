@@ -319,9 +319,7 @@ async fn multi_channel_disconnect_cancels_all_builds() -> anyhow::Result<()> {
             scheduler_client,
             None,
             rio_gateway::handler::SessionJwt::none(),
-            None,
-            rio_gateway::TenantLimiter::disabled(),
-            rio_gateway::QuotaCache::new(),
+            rio_gateway::SessionShared::default(),
         );
         ctx.active_build_ids.insert(build_id.to_string());
         let (client, server) = tokio::io::duplex(64 * 1024);
@@ -454,9 +452,7 @@ async fn test_idle_timeout_cancels_active_builds() -> anyhow::Result<()> {
         scheduler_client,
         None,                                     // tenant
         rio_gateway::handler::SessionJwt::none(), // jwt
-        None,                                     // service_signer
-        rio_gateway::TenantLimiter::disabled(),
-        rio_gateway::QuotaCache::new(),
+        rio_gateway::SessionShared::default(),
     );
     ctx.active_build_ids.insert("leaked-build-id".to_string());
 
@@ -553,9 +549,7 @@ async fn test_read_error_cancels_active_builds() -> anyhow::Result<()> {
         scheduler_client,
         None,
         rio_gateway::handler::SessionJwt::none(),
-        None,
-        rio_gateway::TenantLimiter::disabled(),
-        rio_gateway::QuotaCache::new(),
+        rio_gateway::SessionShared::default(),
     );
     ctx.active_build_ids
         .insert("leaked-on-read-err".to_string());
@@ -661,9 +655,7 @@ async fn test_post_opcode_flush_error_cancels_active_builds() -> anyhow::Result<
         scheduler_client,
         None,
         rio_gateway::handler::SessionJwt::none(),
-        None,
-        rio_gateway::TenantLimiter::disabled(),
-        rio_gateway::QuotaCache::new(),
+        rio_gateway::SessionShared::default(),
     );
     ctx.active_build_ids
         .insert("leaked-on-flush-err".to_string());
@@ -856,9 +848,7 @@ async fn test_cancel_race_attributes_channel_close_on_every_arm() -> anyhow::Res
         scheduler_client,
         None,
         rio_gateway::handler::SessionJwt::none(),
-        None,
-        rio_gateway::TenantLimiter::disabled(),
-        rio_gateway::QuotaCache::new(),
+        rio_gateway::SessionShared::default(),
     );
     ctx.active_build_ids.insert("raced-read-err".to_string());
     let shutdown = rio_common::signal::Token::new();
@@ -942,9 +932,7 @@ async fn test_cancel_race_attributes_channel_close_on_every_arm() -> anyhow::Res
         scheduler_client,
         None,
         rio_gateway::handler::SessionJwt::none(),
-        None,
-        rio_gateway::TenantLimiter::disabled(),
-        rio_gateway::QuotaCache::new(),
+        rio_gateway::SessionShared::default(),
     );
     ctx.active_build_ids.insert("raced-flush-err".to_string());
     let mut setopts = Vec::new();

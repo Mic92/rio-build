@@ -36,7 +36,7 @@ use tokio::sync::Semaphore;
 use tonic::transport::Channel;
 use tracing::{debug, error, info, warn};
 
-use crate::quota::QuotaCache;
+use crate::SessionShared;
 use crate::ratelimit::TenantLimiter;
 
 /// Default global connection cap (`r[gw.conn.cap]`). At this many
@@ -194,22 +194,13 @@ pub struct GatewayServer {
     /// ResolveTenant RPC timeout — gateway-only knob, lives here rather
     /// than on `JwtConfig` (scheduler/store never read it).
     resolve_timeout: std::time::Duration,
-    /// Service-identity HMAC signer (`RIO_SERVICE_HMAC_KEY_PATH`).
-    /// Cloned into every `SessionContext` so write opcodes can attach
-    /// `x-rio-service-token` on store `PutPath`. `None` = disabled.
-    service_signer: Option<Arc<rio_auth::hmac::HmacSigner>>,
-    /// Per-tenant build-submit rate limiter keyed on `tenant_name`
-    /// (authorized_keys comment). Disabled by default. Clones share
-    /// state (inner `Arc`), so the tenant's bucket is counted across
-    /// all their concurrent SSH connections, not per-connection.
-    /// See `r[gw.rate.per-tenant]`.
-    limiter: TenantLimiter,
-    /// Per-tenant store-quota cache (30s TTL). Clones share state
-    /// — a quota reading fetched by one connection is warm for all.
-    /// Always enabled: single-tenant mode (empty `tenant_name`)
-    /// skips the check inside the cache, so there's no disabled
-    /// variant. See `r[store.gc.tenant-quota-enforce]`.
-    quota_cache: QuotaCache,
+    /// Per-process shared state cloned into every protocol session
+    /// (per-tenant rate limiter `r[gw.rate.per-tenant]`, store-quota
+    /// cache `r[store.gc.tenant-quota-enforce]`, PutPath singleflight
+    /// `r[gw.put.singleflight]`, service-HMAC signer). All
+    /// `Arc`-backed — clones share the same buckets/cache/in-flight
+    /// map/signer across all connections.
+    shared: SessionShared,
     // r[impl gw.conn.cap]
     /// Global connection cap. `try_acquire_owned()` in `new_client`;
     /// the permit is moved into the `ConnectionHandler` and dropped
@@ -282,9 +273,7 @@ impl GatewayServer {
             jwt_signing_key: None,
             jwt_config: JwtConfig::default(),
             resolve_timeout: std::time::Duration::from_millis(500),
-            service_signer: None,
-            limiter: TenantLimiter::disabled(),
-            quota_cache: QuotaCache::new(),
+            shared: SessionShared::default(),
             conn_sem: Arc::new(Semaphore::new(DEFAULT_MAX_CONNECTIONS)),
             session_sem: Arc::new(Semaphore::new(DEFAULT_MAX_SESSIONS)),
             max_channels_per_connection: DEFAULT_MAX_CHANNELS_PER_CONNECTION,
@@ -325,7 +314,7 @@ impl GatewayServer {
     /// is the disabled variant (every `check()` passes). Builder-style
     /// so main.rs composes alongside `with_jwt_signing_key`.
     pub fn with_rate_limiter(mut self, limiter: TenantLimiter) -> Self {
-        self.limiter = limiter;
+        self.shared.limiter = limiter;
         self
     }
 
@@ -401,7 +390,7 @@ impl GatewayServer {
     /// called, write opcodes attach no `x-rio-service-token` (store
     /// rejects unless its verifier is also unconfigured). Builder-style.
     pub fn with_service_hmac_signer(mut self, signer: rio_auth::hmac::HmacSigner) -> Self {
-        self.service_signer = Some(Arc::new(signer));
+        self.shared.service_signer = Some(Arc::new(signer));
         self
     }
 
@@ -1150,9 +1139,7 @@ impl russh::server::Server for GatewayServer {
             resolve_timeout: self.resolve_timeout,
             // ^ threaded separately from jwt_config since JwtConfig is shared
             // with scheduler/store which never need it.
-            service_signer: self.service_signer.clone(),
-            limiter: self.limiter.clone(),
-            quota_cache: self.quota_cache.clone(),
+            shared: self.shared.clone(),
             channels: HashMap::new(),
             tenant_name: None,
             jwt_token: None,

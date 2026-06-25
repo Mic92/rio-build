@@ -160,6 +160,35 @@ pub struct MockStoreCalls {
 pub struct MockStoreFaults {
     /// If > 0, put_path decrements and returns Unavailable. For retry tests.
     pub fail_next_puts: Arc<AtomicU32>,
+    /// If Some, every `put_path` / `put_path_batch` call parks on
+    /// `gate.acquire().await` after incrementing `put_path_started`.
+    /// Tests set via `*faults.put_path_gate.write().unwrap() =
+    /// Some(Arc::new(Semaphore::new(0)))` and release via
+    /// `add_permits(n)`. `Arc<RwLock<Option<_>>>` (not `Option<Arc<_>>`)
+    /// so it composes with [`spawn_mock_store`](crate::grpc::spawn_mock_store)
+    /// — same late-set discipline as the other knobs in this struct.
+    /// Semaphore not Notify: permit-based, no missed-wakeup window
+    /// (same reasoning as `rio-gateway`'s `PutSingleflight`).
+    pub put_path_gate: Arc<RwLock<Option<Arc<tokio::sync::Semaphore>>>>,
+    /// Count of PutPath/PutPathBatch/PutPathChunked RPC arrivals (all
+    /// three feed [`arrival_gate`](Self::arrival_gate); incremented at
+    /// fn entry, before any fault-injection check). Distinguishes
+    /// "client never reached the RPC" from "RPC fault-injected" —
+    /// `calls.put_calls` only records successful completions. Tests
+    /// asserting on this count for one lane (e.g. singleflight
+    /// "exactly one leader reached the store") must not co-run with a
+    /// path that issues the other two RPCs.
+    pub put_path_started: Arc<AtomicU32>,
+    /// Override for the status code `fail_next_puts` returns. `None` →
+    /// `Unavailable` (existing behavior). Set to `Code::InvalidArgument`
+    /// for a non-retryable failure (gateway's `transient_retry_after`
+    /// does NOT retry InvalidArgument). Do NOT set to `Code::Aborted` —
+    /// use [`abort_next_puts`](Self::abort_next_puts) instead, which
+    /// carries `CONCURRENT_PUTPATH_MSG` so
+    /// `is_concurrent_putpath_aborted` matches; an Aborted via this
+    /// knob has the generic "mock: injected put failure" message and
+    /// exercises a different code path.
+    pub fail_next_puts_code: Arc<RwLock<Option<tonic::Code>>>,
     /// If > 0, put_path decrements and returns the store's typed
     /// NAR-budget shed (`ResourceExhausted` + "retry" text — the
     /// `rio_common::grpc::STORE_SHED_CLASSES` contract face, the
@@ -173,10 +202,13 @@ pub struct MockStoreFaults {
     /// is the structural attempt counter for asserting the builder
     /// does NOT burn its retry budget on a non-retryable status.
     pub reject_next_chunked_puts: Arc<AtomicU32>,
-    /// If > 0, put_path decrements and returns `Aborted("concurrent
-    /// PutPath in progress for this path; retry")` — matching the real
-    /// store's placeholder-contention response (`put_path.rs`). For
-    /// gateway I-068 retry tests.
+    /// If > 0, `put_path` / `put_path_batch` / `put_path_chunked`
+    /// decrement and return `Aborted("concurrent PutPath in progress
+    /// for this path; retry")` — matching the real store's
+    /// placeholder-contention response (`put_path.rs`). For gateway
+    /// I-068 retry tests. Forwarded to all three Put RPCs (matching
+    /// `arrival_gate` / `fail_next_puts`) so a test that arms this
+    /// knob against batch/chunked gets the fault, not a vacuous Ok.
     pub abort_next_puts: Arc<AtomicU32>,
     /// If true, find_missing_paths returns Unavailable. For scheduler
     /// cache-check error-path tests.
@@ -285,6 +317,37 @@ pub struct MockStoreFaults {
     /// tests: a `>16 MiB` entry that early-Ok's must leave the framed
     /// reader at exactly `nar_size` so the next entry's header parses.
     pub put_path_early_ok_paths: Arc<RwLock<HashSet<String>>>,
+}
+
+impl MockStoreFaults {
+    /// `put_path` / `put_path_batch` / `put_path_chunked` arrival
+    /// prologue: increment
+    /// [`put_path_started`](Self::put_path_started) then park on
+    /// [`put_path_gate`](Self::put_path_gate) if set. Permit dropped
+    /// immediately by design — one `add_permits(1)` releases all
+    /// parked arrivals (gate-acquire is FIFO, but post-gate the
+    /// released sessions proceed CONCURRENTLY through the rest of the
+    /// RPC body; the fault counters are atomic so any-N-of-M get the
+    /// fault). `is_err()` ⇒ semaphore closed = test dropped/closed the
+    /// gate; proceed ungated. Do NOT bind as `let _permit =` — that
+    /// changes one-permit-drains-all into one-permit-per-arrival and
+    /// every singleflight test hangs.
+    ///
+    /// LOAD-BEARING residual: after the cascade drains N parked
+    /// arrivals the semaphore is left at 1 permit, so any LATER
+    /// arrival passes the gate ungated. The gateway's fail-open path
+    /// (`singleflight_buffered_follower_fails_open_on_leader_failure`)
+    /// depends on this — the follower's fail-open `grpc_put_path`
+    /// re-enters here after the cascade and must NOT park. A
+    /// `forget_permits(1)` (or a bound permit) breaks that test by
+    /// parking the fail-open forever.
+    async fn arrival_gate(&self) {
+        self.put_path_started.fetch_add(1, Ordering::SeqCst);
+        let gate = self.put_path_gate.read().unwrap().clone();
+        if let Some(gate) = gate
+            && gate.acquire().await.is_err()
+        { /* gate closed → proceed ungated */ }
+    }
 }
 
 /// In-memory store: `store_path -> (PathInfo, nar_bytes)`.
@@ -553,6 +616,7 @@ impl StoreService for MockStore {
         &self,
         request: Request<Streaming<types::PutPathRequest>>,
     ) -> Result<Response<types::PutPathResponse>, Status> {
+        self.faults.arrival_gate().await;
         // Injected failure for retry tests. fetch_update returns Err when
         // the closure returns None (counter is 0) — i.e., no failure to inject.
         if self
@@ -563,7 +627,13 @@ impl StoreService for MockStore {
             })
             .is_ok()
         {
-            return Err(Status::unavailable("mock: injected put failure"));
+            let code = self
+                .faults
+                .fail_next_puts_code
+                .read()
+                .unwrap()
+                .unwrap_or(tonic::Code::Unavailable);
+            return Err(Status::new(code, "mock: injected put failure"));
         }
         if self
             .faults
@@ -588,9 +658,10 @@ impl StoreService for MockStore {
             })
             .is_ok()
         {
-            return Err(Status::aborted(
-                "concurrent PutPath in progress for this path; retry",
-            ));
+            return Err(Status::aborted(format!(
+                "{} for this path; retry",
+                rio_proto::CONCURRENT_PUTPATH_MSG
+            )));
         }
         let mut stream = request.into_inner();
         let first = stream
@@ -699,6 +770,7 @@ impl StoreService for MockStore {
         use sha2::{Digest, Sha256};
         use std::collections::BTreeMap;
 
+        self.faults.arrival_gate().await;
         // `fail_next_puts` injection — decrement once for the whole
         // batch (not per output). Batch is one RPC.
         if self
@@ -709,7 +781,26 @@ impl StoreService for MockStore {
             })
             .is_ok()
         {
-            return Err(Status::unavailable("mock: injected batch put failure"));
+            let code = self
+                .faults
+                .fail_next_puts_code
+                .read()
+                .unwrap()
+                .unwrap_or(tonic::Code::Unavailable);
+            return Err(Status::new(code, "mock: injected batch put failure"));
+        }
+        if self
+            .faults
+            .abort_next_puts
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
+                (n > 0).then(|| n - 1)
+            })
+            .is_ok()
+        {
+            return Err(Status::aborted(format!(
+                "{} for this path; retry",
+                rio_proto::CONCURRENT_PUTPATH_MSG
+            )));
         }
 
         let mut stream = request.into_inner();
@@ -1267,6 +1358,7 @@ impl StoreService for MockStore {
         &self,
         request: Request<Streaming<types::PutPathChunkedRequest>>,
     ) -> Result<Response<types::PutPathChunkedResponse>, Status> {
+        self.faults.arrival_gate().await;
         // Same transient-failure knob as PutPath/PutPathBatch — one
         // decrement per RPC, for retry tests.
         if self
@@ -1277,7 +1369,26 @@ impl StoreService for MockStore {
             })
             .is_ok()
         {
-            return Err(Status::unavailable("mock: injected chunked put failure"));
+            let code = self
+                .faults
+                .fail_next_puts_code
+                .read()
+                .unwrap()
+                .unwrap_or(tonic::Code::Unavailable);
+            return Err(Status::new(code, "mock: injected chunked put failure"));
+        }
+        if self
+            .faults
+            .abort_next_puts
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
+                (n > 0).then(|| n - 1)
+            })
+            .is_ok()
+        {
+            return Err(Status::aborted(format!(
+                "{} for this path; retry",
+                rio_proto::CONCURRENT_PUTPATH_MSG
+            )));
         }
         // Deterministic-rejection knob: the real store's chunk-backend
         // gate (FAILED_PRECONDITION before reading any frame). One

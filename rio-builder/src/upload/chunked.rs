@@ -209,8 +209,7 @@ pub(super) async fn upload_outputs_chunked(
                 // by now, every output is already complete — take the
                 // idempotent-skip path instead of burning the remaining
                 // attempts re-probing and re-streaming.
-                if status.code() == tonic::Code::Aborted
-                    && status.message().contains(rio_proto::CONCURRENT_PUTPATH_MSG)
+                if rio_proto::is_concurrent_putpath_aborted(&status)
                     && let Some(already_present) =
                         super::all_outputs_already_present(&clients.store, basenames).await
                 {

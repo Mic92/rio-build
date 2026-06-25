@@ -17,6 +17,17 @@ pub use rio_common::grpc::{
     TRACE_ID_HEADER,
 };
 
+/// rio-store's default budget for waiting out a concurrent same-path
+/// uploader (`r[store.put.concurrent-wait]`). Lives in rio-proto as a
+/// wire-protocol contract: rio-gateway's `FOLLOWER_WAIT_CAP` is
+/// const-asserted ≤ half this value (a follower fails open before the
+/// store-side wait would have surfaced Aborted, with margin so an
+/// LB/SSH idle timeout tuned ≥ this value does not fire on the
+/// follower's silence), so a one-sided bump cannot silently misalign
+/// the two. rio-store re-exports this; both sides reference the one
+/// constant.
+pub const DEFAULT_CONCURRENT_PUT_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// Substring carried in the `Status::aborted` message when PutPath /
 /// PutPathBatch find a live `'uploading'` placeholder for the same
 /// store path. This is a wire-protocol contract: rio-builder
@@ -26,6 +37,15 @@ pub use rio_common::grpc::{
 /// sites and both consumer match sites use this constant so the string
 /// can't drift again.
 pub const CONCURRENT_PUTPATH_MSG: &str = "concurrent PutPath in progress";
+
+/// True iff `s` is the store's I-068 placeholder-contention `Aborted`
+/// (Code::Aborted carrying [`CONCURRENT_PUTPATH_MSG`]). The wait-then-
+/// adopt callers (rio-gateway streaming lane, rio-builder chunked
+/// upload) key on this exact predicate; if the store ever switches to a
+/// typed error-details field, this is the one site to update.
+pub fn is_concurrent_putpath_aborted(s: &tonic::Status) -> bool {
+    s.code() == tonic::Code::Aborted && s.message().contains(CONCURRENT_PUTPATH_MSG)
+}
 
 /// True for gRPC status codes the scheduler emits as a RETRYABLE
 /// refusal (`r[sched.grpc.fence-retryable]`): UNAVAILABLE

@@ -2025,7 +2025,7 @@ every established session on the instance with it.
   here.
 ]
 
-#r("gw.put.aborted-retry")[
+#r("gw.put.aborted-retry+2")[
   The buffered `grpc_put_path` helper (used by `wopAddToStore`,
   `wopAddTextToStore`, and the `.drv`-buffered branch of
   `wopAddToStoreNar`/`wopAddMultipleToStore`) MUST retry on store
@@ -2038,8 +2038,27 @@ every established session on the instance with it.
   `grpc_put_path_streaming` helper is *not* retried on `Aborted` --- its reader
   is consumed and the bytes were forwarded as they arrived, so there is nothing
   to replay; in practice that path only fires for oversize non-`.drv` entries
-  where the I-068 collision case does not apply.
+  where the I-068 collision case does not apply; on `Aborted` carrying the
+  placeholder-contention message the streaming lane drains its bytes and falls
+  back to wait-then-adopt via `QueryPathInfo` polling (preceded by
+  #rref("gw.put.singleflight")'s signal-wait when an in-process leader exists).
 ]
+
+#r("gw.put.singleflight+2")[
+  Buffered-lane `PutPath` requests for the same `(tenant, store-path)` within
+  one gateway process MUST coalesce via precheck: the first caller uploads;
+  others await its completion (bounded) and adopt via `QueryPathInfo`; on miss
+  the follower fails open and uploads directly (the pre-singleflight shape).
+  Streaming-lane `PutPath` uses the singleflight registry only as a
+  post-failure wait signal --- every streaming session uploads (no precheck,
+  no buffer); a follower whose own upload returns `Aborted+CONCURRENT` waits
+  on the in-process leader's bounded signal then QPI before falling back to
+  #rref("gw.put.aborted-retry")'s budget poll. Dispositions are observable as
+  #(refs.metric)("rio_gateway_putpath_singleflight_total").
+]
+Tenant-scoped because #rref("store.put.tenant-junction") requires every
+uploading tenant to reach the store for its junction row. Per-process only
+--- cross-replica contention falls back to #rref("gw.put.aborted-retry").
 
 #r("gw.putpath.emit-law")[
   Every PutPath failure observation at the gateway MUST emit exactly one

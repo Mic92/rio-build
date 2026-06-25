@@ -50,8 +50,14 @@ use std::fmt;
 /// `Deref<Target = str>` and `AsRef<str>` so it drops into any
 /// `&str`-taking function without `.as_str()`. `From<NormalizedName>
 /// for String` via `.into()` for proto-body re-serialization.
+///
+/// `Arc<str>` (not `String`): tenant names are cloned per-iteration on
+/// hot paths (gateway opcode-44's 45k-entry batch, the
+/// `PutSingleflight` key) — an `Arc` bump avoids one heap alloc per
+/// clone. `From<NormalizedName> for String` pays one alloc on the way
+/// out (proto re-serialization), which is the right trade.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct NormalizedName(String);
+pub struct NormalizedName(std::sync::Arc<str>);
 
 /// Construction-time rejection. The `Display` impl's message is what
 /// callers map to `Status::invalid_argument`.
@@ -87,7 +93,7 @@ impl NormalizedName {
         if trimmed.chars().any(char::is_whitespace) {
             return Err(NameError::InteriorWhitespace(trimmed.to_string()));
         }
-        Ok(Self(trimmed.to_string()))
+        Ok(Self(std::sync::Arc::from(trimmed)))
     }
 
     /// Trim + invalid-to-None. For sites where an empty/whitespace
@@ -141,19 +147,21 @@ impl std::borrow::Borrow<str> for NormalizedName {
 
 impl From<NormalizedName> for String {
     fn from(n: NormalizedName) -> String {
-        n.0
+        // Arc<str> → owned String: one alloc on the way out (proto
+        // re-serialization). The cheap-clone trade is the point.
+        String::from(&*n.0)
     }
 }
 
 impl PartialEq<str> for NormalizedName {
     fn eq(&self, o: &str) -> bool {
-        self.0 == o
+        &*self.0 == o
     }
 }
 
 impl PartialEq<&str> for NormalizedName {
     fn eq(&self, o: &&str) -> bool {
-        self.0 == *o
+        &*self.0 == *o
     }
 }
 
